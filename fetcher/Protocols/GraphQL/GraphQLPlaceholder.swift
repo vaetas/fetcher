@@ -1,0 +1,1 @@
+// Future GraphQL protocol support.
