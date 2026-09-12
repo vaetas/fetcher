@@ -9,11 +9,15 @@ final class RequestWorkspaceModel {
     var preview: PreparedRequestPreview?
     var lastError: RESTExecutionError?
     var formattedResponseBody: String?
+    var responseBodyIsJSON = false
     var isFormattingResponse = false
+    var isResponseBodyFullyLoaded = true
+    var responseBodyNotice: String?
     var jsonFormatToken = UUID()
 
     private let executor: RESTRequestExecutor
     private var sendTask: Task<Void, Never>?
+    private var bodyFormatTask: Task<Void, Never>?
     private(set) var currentRequestID: UUID?
     var draftBuilder: (() async throws -> RESTRequestDraft)?
 
@@ -28,6 +32,11 @@ final class RequestWorkspaceModel {
             preview = nil
             lastError = nil
             formattedResponseBody = nil
+            responseBodyIsJSON = false
+            isResponseBodyFullyLoaded = true
+            responseBodyNotice = nil
+            bodyFormatTask?.cancel()
+            bodyFormatTask = nil
             currentRequestID = requestID
         }
     }
@@ -35,8 +44,13 @@ final class RequestWorkspaceModel {
     func send() {
         guard let draftBuilder else { return }
         cancelInFlightOnly()
+        bodyFormatTask?.cancel()
+        bodyFormatTask = nil
         executionState = .running
         lastError = nil
+        formattedResponseBody = nil
+        isResponseBodyFullyLoaded = false
+        responseBodyNotice = nil
         sendTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -94,13 +108,38 @@ final class RequestWorkspaceModel {
     }
 
     private func formatResponseBody(_ artifact: RESTResponseArtifact) async {
-        isFormattingResponse = true
-        defer { isFormattingResponse = false }
+        bodyFormatTask?.cancel()
         let data = artifact.body
         let mime = artifact.mimeType
-        formattedResponseBody = await Task.detached(priority: .userInitiated) {
-            ResponseBodyFormatter.format(data: data, mimeType: mime)
-        }.value
+
+        isFormattingResponse = true
+        isResponseBodyFullyLoaded = false
+        responseBodyNotice = nil
+        formattedResponseBody = nil
+        responseBodyIsJSON = false
+
+        bodyFormatTask = Task {
+            await ResponseBodyFormatter.loadProgressively(data: data, mimeType: mime) { update in
+                switch update {
+                case .replace(let text, let isJSON, let isComplete, let notice):
+                    formattedResponseBody = text
+                    responseBodyIsJSON = isJSON
+                    isResponseBodyFullyLoaded = isComplete
+                    responseBodyNotice = notice
+                    isFormattingResponse = !isComplete
+                case .append(let text, let isComplete, let notice):
+                    formattedResponseBody = (formattedResponseBody ?? "") + text
+                    isResponseBodyFullyLoaded = isComplete
+                    if let notice { responseBodyNotice = notice }
+                    isFormattingResponse = !isComplete
+                }
+            }
+        }
+
+        await bodyFormatTask?.value
+        if isFormattingResponse, isResponseBodyFullyLoaded {
+            isFormattingResponse = false
+        }
     }
 
     private func errorArtifact(for error: RESTExecutionError) -> RESTResponseArtifact {
@@ -121,46 +160,5 @@ final class RequestWorkspaceModel {
             redirects: [],
             error: error
         )
-    }
-}
-
-enum ResponseBodyFormatter {
-    static func format(data: Data, mimeType: String?) -> String {
-        if data.isEmpty { return "" }
-
-        if isBinary(data: data, mimeType: mimeType) {
-            return "Binary response — \(ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file))"
-        }
-
-        let looksJSON = mimeType?.contains("json") == true
-            || ((try? JSONSerialization.jsonObject(with: data)) != nil)
-        if looksJSON,
-           let object = try? JSONSerialization.jsonObject(with: data),
-           let pretty = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
-           let text = String(data: pretty, encoding: .utf8) {
-            return text
-        }
-        if let text = decodeText(data: data) {
-            return text
-        }
-        return "Binary response — \(ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file))"
-    }
-
-    static func decodeText(data: Data) -> String? {
-        if data.contains(0) { return nil }
-        if let utf8 = String(data: data, encoding: .utf8), utf8.utf8.count == data.count {
-            return utf8
-        }
-        return nil
-    }
-
-    static func isBinary(data: Data, mimeType: String?) -> Bool {
-        if mimeType?.hasPrefix("image/") == true { return true }
-        if mimeType?.hasPrefix("audio/") == true { return true }
-        if mimeType?.hasPrefix("video/") == true { return true }
-        if mimeType == "application/octet-stream" { return true }
-        if mimeType?.contains("json") == true { return false }
-        if mimeType?.hasPrefix("text/") == true { return false }
-        return decodeText(data: data) == nil
     }
 }

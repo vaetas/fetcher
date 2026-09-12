@@ -17,8 +17,9 @@ struct AuthEditorView: View {
     @State private var didLoad = false
 
     var body: some View {
-        Form {
-            Section("Authentication") {
+        ScrollView {
+            Form {
+                Section("Authentication") {
                 Picker("Type", selection: authKindBinding) {
                     ForEach(AuthKind.allCases, id: \.self) { kind in
                         Text(kind.displayName).tag(kind)
@@ -57,8 +58,10 @@ struct AuthEditorView: View {
                     Button("Save Secret") { Task { await persistSecrets() } }
                 }
             }
+            }
+            .formStyle(.grouped)
         }
-        .formStyle(.grouped)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, 8)
         .task {
             guard !didLoad else { return }

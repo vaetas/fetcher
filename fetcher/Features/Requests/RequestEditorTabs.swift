@@ -6,15 +6,18 @@ struct ParamsEditorView: View {
     @Bindable var request: RequestRecord
 
     var body: some View {
-        Form {
-            Section("Query") {
-                KeyValueEditor(entries: queryBinding)
+        ScrollView {
+            Form {
+                Section("Query") {
+                    KeyValueEditor(entries: queryBinding)
+                }
+                Section("Path") {
+                    KeyValueEditor(entries: pathBinding, keyPlaceholder: "Name", valuePlaceholder: "Value")
+                }
             }
-            Section("Path") {
-                KeyValueEditor(entries: pathBinding, keyPlaceholder: "Name", valuePlaceholder: "Value")
-            }
+            .formStyle(.grouped)
         }
-        .formStyle(.grouped)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, 8)
     }
 
@@ -64,17 +67,20 @@ struct HeadersEditorView: View {
     let suggestions: [String]
 
     var body: some View {
-        Form {
-            Section("Headers") {
-                KeyValueEditor(
-                    entries: headerBinding,
-                    keyPlaceholder: "Header",
-                    valuePlaceholder: "Value",
-                    keySuggestions: suggestions
-                )
+        ScrollView {
+            Form {
+                Section("Headers") {
+                    KeyValueEditor(
+                        entries: headerBinding,
+                        keyPlaceholder: "Header",
+                        valuePlaceholder: "Value",
+                        keySuggestions: suggestions
+                    )
+                }
             }
+            .formStyle(.grouped)
         }
-        .formStyle(.grouped)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, 8)
     }
 
@@ -155,10 +161,12 @@ struct BodyEditorView: View {
                         validateJSON()
                     }
                 ))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.horizontal)
                 .padding(.bottom)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(.top, 8)
         .onAppear(perform: validateJSON)
     }
@@ -213,8 +221,9 @@ struct RequestSettingsView: View {
 
     var body: some View {
         let rest = ensureRest()
-        Form {
-            Section("Timeout") {
+        ScrollView {
+            Form {
+                Section("Timeout") {
                 Toggle("Use custom timeout", isOn: Binding(
                     get: { rest.timeoutSeconds != nil },
                     set: {
@@ -257,8 +266,10 @@ struct RequestSettingsView: View {
                 LabeledContent("Cookies", value: CookiePolicy.isolatedEphemeral.displayName)
                 LabeledContent("TLS", value: TLSPolicy.systemDefault.displayName)
             }
+            }
+            .formStyle(.grouped)
         }
-        .formStyle(.grouped)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, 8)
     }
 

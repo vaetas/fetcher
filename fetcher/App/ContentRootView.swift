@@ -81,6 +81,7 @@ struct ContentRootView: View {
                     .inspectorColumnWidth(min: 240, ideal: 300, max: 420)
             }
         }
+        .frame(minWidth: 960, maxWidth: .infinity, minHeight: 600, maxHeight: .infinity)
         .onAppear {
             commandCenter.workspace = workspace
             commandCenter.onNewProject = { createProject() }
@@ -99,6 +100,7 @@ struct ContentRootView: View {
                             }
                         }
                 }
+                .presentationSizing(.form)
                 .frame(minWidth: 640, minHeight: 480)
             }
         }

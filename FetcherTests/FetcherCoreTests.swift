@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import fetcher
@@ -184,5 +185,66 @@ struct ResponseBodyFormatterTests {
         let data = Data([0x00, 0x01, 0x02, 0xFF])
         let formatted = ResponseBodyFormatter.format(data: data, mimeType: "application/octet-stream")
         #expect(formatted.contains("Binary response"))
+    }
+
+    @Test func previewLargeTextBody() {
+        let payload = String(repeating: "x", count: 120_000)
+        let data = Data(payload.utf8)
+        let preview = ResponseBodyFormatter.preview(data: data, mimeType: "text/plain")
+        #expect(preview?.text.contains("Loading remaining") == true)
+    }
+
+    @Test func skipsPrettyPrintForLargeJSON() {
+        let json = "{\"value\":\"" + String(repeating: "a", count: 600_000) + "\"}"
+        let data = Data(json.utf8)
+        let result = ResponseBodyFormatter.formatForDisplay(data: data, mimeType: "application/json")
+        #expect(result.skippedPrettyPrint)
+        #expect(result.isJSON)
+    }
+}
+
+struct EditorSearchHighlighterTests {
+    @Test func findsCaseInsensitiveMatches() {
+        let matches = EditorSearchHighlighter.ranges(of: "error", in: "Error one, another error")
+        #expect(matches.count == 2)
+    }
+
+    @Test func highlightsActiveMatch() {
+        let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        let attributed = NSMutableAttributedString(string: "alpha beta alpha")
+        attributed.addAttribute(.font, value: font, range: NSRange(location: 0, length: attributed.length))
+
+        let matches = EditorSearchHighlighter.apply(to: attributed, query: "alpha", activeMatchIndex: 1)
+        #expect(matches.count == 2)
+
+        let firstColor = attributed.attribute(.backgroundColor, at: matches[0].location, effectiveRange: nil) as? NSColor
+        let secondColor = attributed.attribute(.backgroundColor, at: matches[1].location, effectiveRange: nil) as? NSColor
+        #expect(firstColor == NSColor.findHighlightColor)
+        #expect(secondColor == NSColor.systemOrange.withAlphaComponent(0.55))
+    }
+}
+
+struct JSONSyntaxHighlighterTests {
+    @Test func validatesJSON() {
+        #expect(JSONSyntaxHighlighter.isValidJSON(#"{"a":1}"#))
+        #expect(!JSONSyntaxHighlighter.isValidJSON("{not json"))
+        #expect(!JSONSyntaxHighlighter.isValidJSON(""))
+    }
+
+    @Test func highlightsJSONTokens() {
+        let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        let attributed = JSONSyntaxHighlighter.attributedString(for: #"{"name":"fetcher","count":2,"ok":true,"missing":null}"#, font: font)
+        let text = attributed.string
+        let nameRange = (text as NSString).range(of: "\"name\"")
+        let fetcherRange = (text as NSString).range(of: "\"fetcher\"")
+        let countRange = (text as NSString).range(of: "2")
+        let trueRange = (text as NSString).range(of: "true")
+        let nullRange = (text as NSString).range(of: "null")
+
+        #expect(attributed.attribute(.foregroundColor, at: nameRange.location, effectiveRange: nil) as? NSColor == .systemTeal)
+        #expect(attributed.attribute(.foregroundColor, at: fetcherRange.location, effectiveRange: nil) as? NSColor == .systemRed)
+        #expect(attributed.attribute(.foregroundColor, at: countRange.location, effectiveRange: nil) as? NSColor == .systemBlue)
+        #expect(attributed.attribute(.foregroundColor, at: trueRange.location, effectiveRange: nil) as? NSColor == .systemPurple)
+        #expect(attributed.attribute(.foregroundColor, at: nullRange.location, effectiveRange: nil) as? NSColor == .secondaryLabelColor)
     }
 }

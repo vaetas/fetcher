@@ -79,6 +79,7 @@ struct ProjectSidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .frame(maxHeight: .infinity)
         .searchable(text: $commandCenter.searchText, placement: .sidebar, prompt: "Search requests")
         .alert("Rename Project", isPresented: Binding(
             get: { renamingProjectID != nil },

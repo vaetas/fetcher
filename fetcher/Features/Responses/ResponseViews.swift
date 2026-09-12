@@ -44,6 +44,7 @@ struct ResponseContainerView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var summaryBar: some View {
@@ -109,14 +110,29 @@ struct ResponseContainerView: View {
 
 struct ResponseBodyView: View {
     @Bindable var workspace: RequestWorkspaceModel
+    @State private var searchText = ""
+    @State private var activeMatchIndex = 0
+    @State private var searchMatchCount = 0
+
+    private var bodyText: String {
+        workspace.formattedResponseBody ?? ""
+    }
+
+    private var clampedActiveMatchIndex: Int {
+        guard searchMatchCount > 0 else { return 0 }
+        return min(activeMatchIndex, searchMatchCount - 1)
+    }
+
+    private var searchTaskKey: String {
+        "\(searchText)|\(bodyText.count)|\(workspace.isResponseBodyFullyLoaded)"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            HStack(spacing: 12) {
                 Button("Copy") {
-                    let text = workspace.formattedResponseBody ?? ""
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(text, forType: .string)
+                    NSPasteboard.general.setString(bodyText, forType: .string)
                 }
                 .disabled(workspace.formattedResponseBody == nil)
 
@@ -129,7 +145,21 @@ struct ResponseBodyView: View {
                     ProgressView()
                         .controlSize(.small)
                 }
+
+                if let notice = workspace.responseBodyNotice {
+                    Text(notice)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
                 Spacer()
+
+                ResponseBodySearchControls(
+                    searchText: $searchText,
+                    activeMatchIndex: $activeMatchIndex,
+                    matchCount: searchMatchCount
+                )
             }
             .padding(.horizontal)
 
@@ -147,16 +177,46 @@ struct ResponseBodyView: View {
             } else {
                 NativeCodeEditor(
                     text: Binding(
-                        get: { workspace.formattedResponseBody ?? "" },
+                        get: { bodyText },
                         set: { _ in }
                     ),
-                    isEditable: false
+                    isEditable: false,
+                    syntaxMode: .jsonWhenValid,
+                    contentIsJSON: workspace.responseBodyIsJSON,
+                    isContentFullyLoaded: workspace.isResponseBodyFullyLoaded,
+                    searchQuery: searchText,
+                    activeSearchMatchIndex: clampedActiveMatchIndex
                 )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.horizontal)
                 .padding(.bottom)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(.top, 8)
+        .onChange(of: searchText) { _, _ in
+            activeMatchIndex = 0
+        }
+        .onChange(of: searchMatchCount) { _, count in
+            if activeMatchIndex >= count {
+                activeMatchIndex = max(0, count - 1)
+            }
+        }
+        .onChange(of: workspace.formattedResponseBody) { _, _ in
+            activeMatchIndex = 0
+        }
+        .task(id: searchTaskKey) {
+            let query = searchText
+            let text = bodyText
+            let count = await Task.detached(priority: .utility) {
+                EditorSearchHighlighter.ranges(of: query, in: text).count
+            }.value
+            guard !Task.isCancelled else { return }
+            searchMatchCount = count
+            if activeMatchIndex >= count {
+                activeMatchIndex = max(0, count - 1)
+            }
+        }
     }
 
     private func saveBody() {
@@ -167,6 +227,59 @@ struct ResponseBodyView: View {
         if panel.runModal() == .OK, let url = panel.url {
             try? data.write(to: url)
         }
+    }
+}
+
+private struct ResponseBodySearchControls: View {
+    @Binding var searchText: String
+    @Binding var activeMatchIndex: Int
+    let matchCount: Int
+
+    var body: some View {
+        HStack(spacing: 6) {
+            TextField("Search", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+                .frame(minWidth: 140, idealWidth: 180, maxWidth: 220)
+                .accessibilityLabel("Search response body")
+
+            if matchCount > 0 {
+                Text("\(activeMatchIndex + 1)/\(matchCount)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .accessibilityLabel("Match \(activeMatchIndex + 1) of \(matchCount)")
+            }
+
+            Button {
+                moveToPreviousMatch()
+            } label: {
+                Image(systemName: "chevron.up")
+            }
+            .buttonStyle(.borderless)
+            .disabled(matchCount == 0)
+            .help("Previous match")
+            .accessibilityLabel("Previous match")
+
+            Button {
+                moveToNextMatch()
+            } label: {
+                Image(systemName: "chevron.down")
+            }
+            .buttonStyle(.borderless)
+            .disabled(matchCount == 0)
+            .help("Next match")
+            .accessibilityLabel("Next match")
+        }
+    }
+
+    private func moveToNextMatch() {
+        guard matchCount > 0 else { return }
+        activeMatchIndex = (activeMatchIndex + 1) % matchCount
+    }
+
+    private func moveToPreviousMatch() {
+        guard matchCount > 0 else { return }
+        activeMatchIndex = (activeMatchIndex - 1 + matchCount) % matchCount
     }
 }
 
@@ -190,6 +303,7 @@ struct ResponseHeadersView: View {
                     .textSelection(.enabled)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(8)
     }
 
@@ -228,6 +342,7 @@ struct ResponseCookiesView: View {
                 TableColumn("Secure") { cookie in Text(cookie.secure ? "✓" : "") }
                 TableColumn("HttpOnly") { cookie in Text(cookie.httpOnly ? "✓" : "") }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(8)
         }
     }
@@ -273,8 +388,9 @@ struct ResponseTimingView: View {
     let metrics: RequestMetrics?
 
     var body: some View {
-        Form {
-            if let metrics {
+        ScrollView {
+            Form {
+                if let metrics {
                 timingRow("DNS", metrics.dnsLookup)
                 timingRow("Connect", metrics.tcpConnect)
                 timingRow("TLS", metrics.tlsHandshake)
@@ -289,8 +405,10 @@ struct ResponseTimingView: View {
                 Text("Timing metrics are unavailable for this response.")
                     .foregroundStyle(.secondary)
             }
+            }
+            .formStyle(.grouped)
         }
-        .formStyle(.grouped)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(8)
     }
 
@@ -313,6 +431,7 @@ struct RawResponseView: View {
             text: .constant(text),
             isEditable: false
         )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(8)
     }
 
