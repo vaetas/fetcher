@@ -5,6 +5,14 @@ import SwiftData
 final class RequestRecord {
     static let defaultName = "New Request"
 
+    static func displayName(for name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == defaultName {
+            return defaultName
+        }
+        return trimmed
+    }
+
     @Attribute(.unique) var id: UUID
     var name: String
     var protocolKindRaw: String

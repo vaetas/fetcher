@@ -12,6 +12,7 @@ struct ProjectSidebarView: View {
     @State private var draftName = ""
     @State private var confirmDeleteProject: ProjectRecord?
     @State private var confirmDeleteRequest: RequestRecord?
+    @FocusState private var renameFieldFocused: Bool
 
     var body: some View {
         List(selection: Binding(
@@ -45,8 +46,7 @@ struct ProjectSidebarView: View {
                                 .contextMenu {
                                     Button("Duplicate") { duplicate(request) }
                                     Button("Rename") {
-                                        renamingRequestID = request.id
-                                        draftName = request.name
+                                        beginRequestRename(request)
                                     }
                                     Divider()
                                     Button("Delete", role: .destructive) {
@@ -66,8 +66,7 @@ struct ProjectSidebarView: View {
                             createRequest(in: project)
                         }
                         Button("Rename") {
-                            renamingProjectID = project.id
-                            draftName = project.name
+                            beginProjectRename(project)
                         }
                         Divider()
                         Button("Delete Project", role: .destructive) {
@@ -81,37 +80,19 @@ struct ProjectSidebarView: View {
         .listStyle(.sidebar)
         .frame(maxHeight: .infinity)
         .searchable(text: $commandCenter.searchText, placement: .sidebar, prompt: "Search requests")
-        .alert("Rename Project", isPresented: Binding(
-            get: { renamingProjectID != nil },
-            set: { if !$0 { renamingProjectID = nil } }
-        )) {
-            TextField("Name", text: $draftName)
-            Button("Cancel", role: .cancel) {}
-            Button("Rename") {
-                if let id = renamingProjectID,
-                   let project = projects.first(where: { $0.id == id }) {
-                    project.name = draftName
-                    project.updatedAt = .now
-                    try? modelContext.save()
-                }
-                renamingProjectID = nil
-            }
+        .onChange(of: commandCenter.renameSelectedRequestToken) { _, _ in
+            renameSelectedRequest()
         }
-        .alert("Rename Request", isPresented: Binding(
+        .sheet(isPresented: Binding(
             get: { renamingRequestID != nil },
-            set: { if !$0 { renamingRequestID = nil } }
+            set: { if !$0 { cancelRequestRename() } }
         )) {
-            TextField("Name", text: $draftName)
-            Button("Cancel", role: .cancel) {}
-            Button("Rename") {
-                if let id = renamingRequestID,
-                   let request = projects.flatMap(\.requests).first(where: { $0.id == id }) {
-                    request.name = draftName
-                    request.updatedAt = .now
-                    try? modelContext.save()
-                }
-                renamingRequestID = nil
-            }
+            RenameNameSheet(
+                title: "Rename Request",
+                name: $draftName,
+                onConfirm: commitRequestRename,
+                onCancel: cancelRequestRename
+            )
         }
         .confirmationDialog(
             "Delete Project?",
@@ -168,7 +149,18 @@ struct ProjectSidebarView: View {
 
     @ViewBuilder
     private func projectLabel(_ project: ProjectRecord) -> some View {
-        Label(project.name, systemImage: "folder")
+        if renamingProjectID == project.id {
+            TextField("Project name", text: $draftName)
+                .textFieldStyle(.plain)
+                .focused($renameFieldFocused)
+                .onSubmit { commitProjectRename() }
+                .onExitCommand { cancelProjectRename() }
+        } else {
+            Label(project.name, systemImage: "folder")
+                .onTapGesture(count: 2) {
+                    beginProjectRename(project)
+                }
+        }
     }
 
     @ViewBuilder
@@ -187,6 +179,70 @@ struct ProjectSidebarView: View {
                 }
             }
         }
+        .contentShape(Rectangle())
+        .simultaneousGesture(TapGesture(count: 2).onEnded {
+            beginRequestRename(request)
+        })
+    }
+
+    private func renameSelectedRequest() {
+        guard let id = commandCenter.selectedRequestID,
+              let request = projects.flatMap(\.requests).first(where: { $0.id == id }) else { return }
+        beginRequestRename(request)
+    }
+
+    private func beginProjectRename(_ project: ProjectRecord) {
+        cancelRequestRename()
+        renamingProjectID = project.id
+        draftName = project.name
+        renameFieldFocused = true
+    }
+
+    private func commitProjectRename() {
+        guard let id = renamingProjectID,
+              let project = projects.first(where: { $0.id == id }) else {
+            cancelProjectRename()
+            return
+        }
+        let trimmed = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            project.name = trimmed
+            project.updatedAt = .now
+            try? modelContext.save()
+        }
+        cancelProjectRename()
+    }
+
+    private func cancelProjectRename() {
+        renamingProjectID = nil
+        renameFieldFocused = false
+    }
+
+    private func beginRequestRename(_ request: RequestRecord) {
+        cancelProjectRename()
+        commandCenter.selectedRequestID = request.id
+        commandCenter.selectedProjectID = request.project?.id
+        renamingRequestID = request.id
+        draftName = request.name
+    }
+
+    private func commitRequestRename() {
+        guard let id = renamingRequestID,
+              let request = projects.flatMap(\.requests).first(where: { $0.id == id }) else {
+            cancelRequestRename()
+            return
+        }
+        let trimmed = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            request.name = trimmed
+            request.updatedAt = .now
+            try? modelContext.save()
+        }
+        cancelRequestRename()
+    }
+
+    private func cancelRequestRename() {
+        renamingRequestID = nil
     }
 
     func createProject() {
@@ -311,5 +367,39 @@ struct ProjectSidebarView: View {
             request.sortIndex = Double(index)
         }
         try? modelContext.save()
+    }
+}
+
+private struct RenameNameSheet: View {
+    let title: String
+    @Binding var name: String
+    let onConfirm: () -> Void
+    let onCancel: () -> Void
+
+    @FocusState private var nameFieldFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(title)
+                .font(.headline)
+
+            TextField("Name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .focused($nameFieldFocused)
+                .onSubmit(onConfirm)
+
+            HStack {
+                Spacer()
+                Button("Cancel", action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                Button("Rename", action: onConfirm)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 360)
+        .onAppear {
+            nameFieldFocused = true
+        }
     }
 }

@@ -11,6 +11,47 @@ struct ContentRootView: View {
     @State private var showProjectSettings = false
 
     var body: some View {
+        Group {
+            if let request = selectedRequest {
+                observedRoot(request: request)
+            } else {
+                rootNavigationSplitView
+                    .navigationTitle(RequestRecord.defaultName)
+            }
+        }
+        .frame(minWidth: 960, maxWidth: .infinity, minHeight: 600, maxHeight: .infinity)
+        .onAppear {
+            commandCenter.workspace = workspace
+            commandCenter.onNewProject = { createProject() }
+            commandCenter.onNewRequest = { createRequest() }
+            commandCenter.onDuplicateRequest = { duplicateRequest() }
+            restoreSelectionIfNeeded()
+        }
+        .sheet(isPresented: $showProjectSettings) {
+            if let project = selectedProject {
+                NavigationStack {
+                    ProjectSettingsView(project: project, secretStore: secretStore)
+                        .navigationTitle("Project Settings")
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Done") { showProjectSettings = false }
+                            }
+                        }
+                }
+                .presentationSizing(.form)
+                .frame(minWidth: 640, minHeight: 480)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func observedRoot(request: RequestRecord) -> some View {
+        @Bindable var request = request
+        rootNavigationSplitView
+            .navigationTitle(RequestRecord.displayName(for: request.name))
+    }
+
+    private var rootNavigationSplitView: some View {
         NavigationSplitView {
             ProjectSidebarView(
                 commandCenter: commandCenter,
@@ -81,46 +122,11 @@ struct ContentRootView: View {
                     .inspectorColumnWidth(min: 240, ideal: 300, max: 420)
             }
         }
-        .navigationTitle(windowTitle)
-        .frame(minWidth: 960, maxWidth: .infinity, minHeight: 600, maxHeight: .infinity)
-        .onAppear {
-            commandCenter.workspace = workspace
-            commandCenter.onNewProject = { createProject() }
-            commandCenter.onNewRequest = { createRequest() }
-            commandCenter.onDuplicateRequest = { duplicateRequest() }
-            restoreSelectionIfNeeded()
-        }
-        .sheet(isPresented: $showProjectSettings) {
-            if let project = selectedProject {
-                NavigationStack {
-                    ProjectSettingsView(project: project, secretStore: secretStore)
-                        .navigationTitle("Project Settings")
-                        .toolbar {
-                            ToolbarItem(placement: .cancellationAction) {
-                                Button("Done") { showProjectSettings = false }
-                            }
-                        }
-                }
-                .presentationSizing(.form)
-                .frame(minWidth: 640, minHeight: 480)
-            }
-        }
     }
 
     private var selectedRequest: RequestRecord? {
         guard let id = commandCenter.selectedRequestID else { return nil }
         return projects.flatMap(\.requests).first(where: { $0.id == id })
-    }
-
-    private var windowTitle: String {
-        guard let request = selectedRequest else {
-            return RequestRecord.defaultName
-        }
-        let trimmedName = request.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmedName.isEmpty || trimmedName == RequestRecord.defaultName {
-            return RequestRecord.defaultName
-        }
-        return request.name
     }
 
     private var selectedProject: ProjectRecord? {

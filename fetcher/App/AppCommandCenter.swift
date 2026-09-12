@@ -8,6 +8,7 @@ enum AppCommandID: Hashable, Sendable {
     case newRequest
     case newProject
     case duplicateRequest
+    case renameRequest
     case toggleInspector
     case focusURL
     case formatJSON
@@ -46,6 +47,7 @@ final class AppCommandCenter {
     var onNewRequest: (() -> Void)?
     var onDuplicateRequest: (() -> Void)?
     var focusURLToken = UUID()
+    var renameSelectedRequestToken = UUID()
 
     init() {
         restore()
@@ -63,6 +65,8 @@ final class AppCommandCenter {
             onNewProject?()
         case .duplicateRequest:
             onDuplicateRequest?()
+        case .renameRequest:
+            renameSelectedRequestToken = UUID()
         case .toggleInspector:
             isInspectorPresented.toggle()
         case .focusURL:

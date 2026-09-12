@@ -32,6 +32,28 @@ struct PersistenceTests {
         let remainingRequests = try context.fetch(FetchDescriptor<RequestRecord>())
         #expect(remainingRequests.isEmpty)
     }
+
+    @Test @MainActor
+    func renameRequestPersists() throws {
+        let container = try PersistenceController.makeContainer(inMemory: true)
+        let context = ModelContext(container)
+
+        let project = ProjectRecord(name: "Worker API")
+        let request = RequestRecord(name: RequestRecord.defaultName, project: project)
+        context.insert(project)
+        context.insert(request)
+        try context.save()
+
+        request.name = "List books"
+        request.updatedAt = .now
+        try context.save()
+
+        let fetched = try context.fetch(FetchDescriptor<RequestRecord>())
+        #expect(fetched.count == 1)
+        #expect(fetched[0].name == "List books")
+        #expect(RequestRecord.displayName(for: fetched[0].name) == "List books")
+        #expect(RequestRecord.displayName(for: RequestRecord.defaultName) == RequestRecord.defaultName)
+    }
 }
 
 actor InMemorySecretStore: SecretStore {

@@ -223,6 +223,15 @@ struct RequestSettingsView: View {
         let rest = ensureRest()
         ScrollView {
             Form {
+                Section("Request") {
+                    TextField("Name", text: Binding(
+                        get: { request.name },
+                        set: {
+                            request.name = $0
+                            save()
+                        }
+                    ))
+                }
                 Section("Timeout") {
                 Toggle("Use custom timeout", isOn: Binding(
                     get: { rest.timeoutSeconds != nil },

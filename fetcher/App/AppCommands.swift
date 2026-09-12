@@ -41,6 +41,12 @@ struct AppCommands: Commands {
             .keyboardShortcut("d", modifiers: .command)
             .disabled(commandCenter.selectedRequestID == nil)
 
+            Button("Rename Request") {
+                commandCenter.perform(.renameRequest)
+            }
+            .keyboardShortcut(.return, modifiers: [])
+            .disabled(commandCenter.selectedRequestID == nil)
+
             Button("Format JSON Body") {
                 commandCenter.perform(.formatJSON)
             }
