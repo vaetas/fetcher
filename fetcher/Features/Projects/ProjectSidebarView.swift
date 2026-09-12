@@ -209,7 +209,7 @@ struct ProjectSidebarView: View {
             return
         }
         let request = RequestRecord(
-            name: "New Request",
+            name: RequestRecord.defaultName,
             sortIndex: (target.requests.map(\.sortIndex).max() ?? 0) + 1,
             project: target
         )

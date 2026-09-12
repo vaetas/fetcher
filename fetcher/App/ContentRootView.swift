@@ -81,6 +81,7 @@ struct ContentRootView: View {
                     .inspectorColumnWidth(min: 240, ideal: 300, max: 420)
             }
         }
+        .navigationTitle(windowTitle)
         .frame(minWidth: 960, maxWidth: .infinity, minHeight: 600, maxHeight: .infinity)
         .onAppear {
             commandCenter.workspace = workspace
@@ -109,6 +110,17 @@ struct ContentRootView: View {
     private var selectedRequest: RequestRecord? {
         guard let id = commandCenter.selectedRequestID else { return nil }
         return projects.flatMap(\.requests).first(where: { $0.id == id })
+    }
+
+    private var windowTitle: String {
+        guard let request = selectedRequest else {
+            return RequestRecord.defaultName
+        }
+        let trimmedName = request.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedName.isEmpty || trimmedName == RequestRecord.defaultName {
+            return RequestRecord.defaultName
+        }
+        return request.name
     }
 
     private var selectedProject: ProjectRecord? {
@@ -150,7 +162,7 @@ struct ContentRootView: View {
             return
         }
         let request = RequestRecord(
-            name: "New Request",
+            name: RequestRecord.defaultName,
             sortIndex: (target.requests.map(\.sortIndex).max() ?? 0) + 1,
             project: target
         )

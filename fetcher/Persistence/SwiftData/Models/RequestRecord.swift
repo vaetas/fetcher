@@ -3,6 +3,8 @@ import SwiftData
 
 @Model
 final class RequestRecord {
+    static let defaultName = "New Request"
+
     @Attribute(.unique) var id: UUID
     var name: String
     var protocolKindRaw: String
