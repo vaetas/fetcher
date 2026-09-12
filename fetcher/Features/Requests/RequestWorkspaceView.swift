@@ -41,10 +41,12 @@ struct RequestWorkspaceView: View {
                 .onAppear {
                     workspace.bind(requestID: request.id)
                     wireDraftBuilder(request: request, project: project)
+                    syncPathParametersIfNeeded(request: request)
                 }
                 .onChange(of: request.id) { _, _ in
                     workspace.bind(requestID: request.id)
                     wireDraftBuilder(request: request, project: project)
+                    syncPathParametersIfNeeded(request: request)
                 }
                 .onChange(of: commandCenter.focusURLToken) { _, _ in
                     urlFocused = true
@@ -216,6 +218,11 @@ struct RequestWorkspaceView: View {
         let env = project.environments.first(where: { $0.id == project.selectedEnvironmentID })
         let base = (env?.baseURL.isEmpty == false ? env?.baseURL : project.baseURL) ?? ""
         return !base.isEmpty || trimmed.hasPrefix("/")
+    }
+
+    private func syncPathParametersIfNeeded(request: RequestRecord) {
+        guard let endpoint = request.restConfiguration?.endpoint else { return }
+        syncPathParameters(request: request, endpoint: endpoint)
     }
 
     private func syncPathParameters(request: RequestRecord, endpoint: String) {

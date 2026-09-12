@@ -97,19 +97,7 @@ struct ProjectSettingsView: View {
                     KeyValueEditor(entries: $defaultHeaders)
                     Button("Save Headers") { saveHeaders() }
                 }
-                Section("Default Auth") {
-                    Picker("Type", selection: Binding(
-                        get: { project.defaultAuthKind },
-                        set: {
-                            project.defaultAuthKind = $0
-                            try? modelContext.save()
-                        }
-                    )) {
-                        ForEach(AuthKind.allCases.filter { $0 != .inherit }, id: \.self) { kind in
-                            Text(kind.displayName).tag(kind)
-                        }
-                    }
-                }
+                ProjectDefaultAuthEditorView(project: project, secretStore: secretStore)
                 Section("Networking") {
                     TextField(
                         "Timeout (seconds)",
