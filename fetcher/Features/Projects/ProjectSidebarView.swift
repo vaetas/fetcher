@@ -178,8 +178,15 @@ struct ProjectSidebarView: View {
                         .lineLimit(1)
                 }
             }
+            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
         .contentShape(Rectangle())
+        .simultaneousGesture(TapGesture().onEnded {
+            commandCenter.selectedRequestID = request.id
+            commandCenter.selectedProjectID = request.project?.id
+            onSelectRequest(request)
+        })
         .simultaneousGesture(TapGesture(count: 2).onEnded {
             beginRequestRename(request)
         })
