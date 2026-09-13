@@ -245,7 +245,6 @@ struct RequestWorkspaceView: View {
                         .completions(document: document, cursorUTF16Offset: offset, schema: schema)
                 },
                 onDocumentChange: { document in
-                    refreshGraphQLOperations(document: document)
                     scheduleGraphQLValidation(document: document)
                 }
             )
@@ -361,10 +360,16 @@ struct RequestWorkspaceView: View {
 
     private func scheduleGraphQLValidation(document: String) {
         let schema = graphqlSchema
-        workspace.scheduleValidation {
+        workspace.scheduleValidation(debounceMilliseconds: 300) {
+            let parsed = try? languageService.parseDocument(document)
+            let operations = parsed?.operations ?? []
+            await MainActor.run {
+                graphqlOperations = operations
+            }
+
             var diagnostics = languageService.syntaxDiagnostics(in: document)
             var blocksSend = diagnostics.contains { $0.severity == .error }
-            if let schema, let parsed = try? languageService.parseDocument(document) {
+            if let schema, let parsed {
                 let schemaDiagnostics = languageService.validate(document: parsed, against: schema)
                 diagnostics.append(contentsOf: schemaDiagnostics)
                 if schemaDiagnostics.contains(where: { $0.severity == .error }) {

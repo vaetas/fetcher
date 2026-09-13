@@ -31,6 +31,7 @@ struct GraphQLRequestEditor: View {
     var onDocumentChange: ((String) -> Void)?
 
     @State private var selectedTab: GraphQLRequestEditorTab = .query
+    @State private var saveTask: Task<Void, Never>?
 
     private var graphqlDefinitions: [APIDefinitionRecord] {
         definitions.filter { $0.kind == .graphql }
@@ -64,6 +65,10 @@ struct GraphQLRequestEditor: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onDisappear {
+            saveTask?.cancel()
+            flushSave()
+        }
     }
 
     private var configurationBar: some View {
@@ -106,7 +111,7 @@ struct GraphQLRequestEditor: View {
     private var queryEditor: some View {
         IntelligentCodeEditor(
             text: documentBinding,
-            syntaxMode: .plain,
+            syntaxMode: .graphql,
             diagnostics: diagnostics,
             completionProvider: completionProvider,
             onDebouncedChange: onDocumentChange
@@ -138,7 +143,7 @@ struct GraphQLRequestEditor: View {
             get: { ensureGraphQL().document },
             set: {
                 ensureGraphQL().document = $0
-                save()
+                scheduleSave()
             }
         )
     }
@@ -148,7 +153,7 @@ struct GraphQLRequestEditor: View {
             get: { ensureGraphQL().variablesJSON },
             set: {
                 ensureGraphQL().variablesJSON = $0
-                save()
+                scheduleSave()
             }
         )
     }
@@ -158,7 +163,7 @@ struct GraphQLRequestEditor: View {
             get: { ensureGraphQL().endpoint },
             set: {
                 ensureGraphQL().endpoint = $0
-                save()
+                scheduleSave()
             }
         )
     }
@@ -168,7 +173,7 @@ struct GraphQLRequestEditor: View {
             get: { ensureGraphQL().methodPreference },
             set: {
                 ensureGraphQL().methodPreference = $0
-                save()
+                flushSave()
             }
         )
     }
@@ -178,7 +183,7 @@ struct GraphQLRequestEditor: View {
             get: { ensureGraphQL().definitionSourceID },
             set: {
                 ensureGraphQL().definitionSourceID = $0
-                save()
+                flushSave()
             }
         )
     }
@@ -188,7 +193,7 @@ struct GraphQLRequestEditor: View {
             get: { ensureGraphQL().operationName },
             set: {
                 ensureGraphQL().operationName = $0
-                save()
+                flushSave()
             }
         )
     }
@@ -201,7 +206,20 @@ struct GraphQLRequestEditor: View {
         return config
     }
 
-    private func save() {
+    private func scheduleSave() {
+        request.updatedAt = .now
+        saveTask?.cancel()
+        saveTask = Task {
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                try? modelContext.save()
+            }
+        }
+    }
+
+    private func flushSave() {
+        saveTask?.cancel()
         request.updatedAt = .now
         try? modelContext.save()
     }

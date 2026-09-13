@@ -126,10 +126,16 @@ struct IntelligentNativeCodeEditor: NSViewRepresentable {
         var lastScrolledActiveMatchIndex: Int?
         var renderTask: Task<Void, Never>?
         private var renderGeneration = 0
+        private var syntaxHighlightTask: Task<Void, Never>?
         private var completionController: CodeCompletionController?
 
         init(_ parent: IntelligentNativeCodeEditor) {
             self.parent = parent
+        }
+
+        deinit {
+            renderTask?.cancel()
+            syntaxHighlightTask?.cancel()
         }
 
         func applyContent(to textView: NSTextView, scrollView: NSScrollView) {
@@ -145,6 +151,12 @@ struct IntelligentNativeCodeEditor: NSViewRepresentable {
                 contentIsJSON: parent.contentIsJSON,
                 isContentFullyLoaded: parent.isContentFullyLoaded
             )
+
+            if textView.string == parent.text {
+                lastAppliedText = parent.text
+                lastDisplayState = displayState
+                return
+            }
 
             if let lastText = lastAppliedText,
                parent.text.hasPrefix(lastText),
@@ -163,9 +175,11 @@ struct IntelligentNativeCodeEditor: NSViewRepresentable {
             if displayState.needsRichPresentation {
                 scheduleRichContent(textView: textView, displayState: displayState, font: font)
             } else {
+                let selectedRanges = textView.selectedRanges
                 textView.isRichText = false
                 textView.string = parent.text
                 textView.font = font
+                textView.selectedRanges = selectedRanges
                 lastAppliedText = parent.text
                 cachedBaseText = nil
                 cachedBaseAttributedString = nil
@@ -213,10 +227,12 @@ struct IntelligentNativeCodeEditor: NSViewRepresentable {
             let activeIndex = displayState.activeSearchMatchIndex
 
             renderTask = Task {
+                let syntaxMode = displayState.syntaxMode
                 let result = await Task.detached(priority: .utility) {
                     CodeEditorContentRenderer.buildAttributedString(
                         text: textCopy,
                         font: font,
+                        syntaxMode: syntaxMode,
                         shouldHighlightJSON: shouldHighlightJSON,
                         searchQuery: searchCopy,
                         activeSearchMatchIndex: activeIndex
@@ -245,12 +261,44 @@ struct IntelligentNativeCodeEditor: NSViewRepresentable {
             textView: NSTextView,
             displayState: NativeCodeEditor.DisplayState
         ) {
+            let selectedRanges = textView.selectedRanges
             textView.isRichText = true
             textView.importsGraphics = false
             textView.textStorage?.setAttributedString(attributed)
+            textView.selectedRanges = selectedRanges
             lastAppliedText = displayState.text
             scrollToActiveMatchIfNeeded(matches: matches, textView: textView, displayState: displayState)
             textView.needsDisplay = true
+        }
+
+        func scheduleDebouncedGraphQLSyntaxHighlight(textView: NSTextView) {
+            guard CodeEditorContentRenderer.shouldDeferGraphQLSyntaxHighlight(
+                text: parent.text,
+                syntaxMode: parent.syntaxMode
+            ) else { return }
+
+            syntaxHighlightTask?.cancel()
+            let textCopy = parent.text
+            let font = textView.font ?? NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+            syntaxHighlightTask = Task {
+                try? await Task.sleep(for: .milliseconds(450))
+                guard !Task.isCancelled else { return }
+
+                let attributed = await Task.detached(priority: .utility) {
+                    GraphQLSyntaxHighlighter.attributedString(for: textCopy, font: font)
+                }.value
+
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard textView.string == textCopy else { return }
+                    let selectedRanges = textView.selectedRanges
+                    textView.isRichText = true
+                    textView.importsGraphics = false
+                    textView.textStorage?.setAttributedString(attributed)
+                    textView.selectedRanges = selectedRanges
+                    lastAppliedText = textCopy
+                }
+            }
         }
 
         private func scrollToActiveMatchIfNeeded(
@@ -272,7 +320,9 @@ struct IntelligentNativeCodeEditor: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             parent.text = textView.string
+            lastAppliedText = textView.string
             parent.onEditingChanged?()
+            scheduleDebouncedGraphQLSyntaxHighlight(textView: textView)
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {

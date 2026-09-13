@@ -100,6 +100,7 @@ struct KeyValueEditor: View {
 enum CodeEditorSyntaxMode {
     case plain
     case jsonWhenValid
+    case graphql
 }
 
 struct NativeCodeEditor: NSViewRepresentable {
@@ -183,6 +184,12 @@ struct NativeCodeEditor: NSViewRepresentable {
             isContentFullyLoaded: isContentFullyLoaded
         )
 
+        if textView.string == text {
+            coordinator.lastAppliedText = text
+            coordinator.lastDisplayState = displayState
+            return
+        }
+
         if let lastText = coordinator.lastAppliedText,
            text.hasPrefix(lastText),
            text.count > lastText.count,
@@ -209,9 +216,11 @@ struct NativeCodeEditor: NSViewRepresentable {
                 font: font
             )
         } else {
+            let selectedRanges = textView.selectedRanges
             textView.isRichText = false
             textView.string = text
             textView.font = font
+            textView.selectedRanges = selectedRanges
             coordinator.lastAppliedText = text
             coordinator.cachedBaseText = nil
             coordinator.cachedBaseAttributedString = nil
@@ -316,10 +325,12 @@ struct NativeCodeEditor: NSViewRepresentable {
             let activeIndex = displayState.activeSearchMatchIndex
 
             renderTask = Task {
+                let syntaxMode = displayState.syntaxMode
                 let result = await Task.detached(priority: .utility) {
                     CodeEditorContentRenderer.buildAttributedString(
                         text: textCopy,
                         font: font,
+                        syntaxMode: syntaxMode,
                         shouldHighlightJSON: shouldHighlightJSON,
                         searchQuery: searchCopy,
                         activeSearchMatchIndex: activeIndex
@@ -369,6 +380,7 @@ struct NativeCodeEditor: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             parent.text = textView.string
+            lastAppliedText = textView.string
             parent.onEditingChanged?()
         }
     }
