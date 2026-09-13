@@ -95,10 +95,14 @@ enum ProtobufDefinitionSourceKind: String, Codable, Sendable, CaseIterable {
     case remoteProtoURL
     case remoteDescriptorSetURL
 
+    static var userSelectableCases: [ProtobufDefinitionSourceKind] {
+        allCases.filter { $0 != .localProtoDirectory }
+    }
+
     var displayName: String {
         switch self {
         case .serverReflection: "Server Reflection"
-        case .localProtoFiles: "Local Proto Files"
+        case .localProtoFiles: "Local Proto Sources"
         case .localProtoDirectory: "Local Proto Directory"
         case .localDescriptorSet: "Local Descriptor Set"
         case .remoteProtoURL: "Remote Proto URL"

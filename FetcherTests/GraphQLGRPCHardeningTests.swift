@@ -76,6 +76,94 @@ struct SchemaSourceReaderLimitsTests {
         #expect(staged.rootFiles.count == 1)
         #expect(staged.rootFiles[0].lastPathComponent == "service.proto")
     }
+
+    @Test func stagesMultipleContractFoldersAsImportRoots() throws {
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let staging = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: temp)
+            try? FileManager.default.removeItem(at: staging)
+        }
+
+        let serviceDirectory = temp.appendingPathComponent("catalog-api/proto", isDirectory: true)
+        let sharedDirectory = temp.appendingPathComponent("shared-contracts/proto", isDirectory: true)
+        try FileManager.default.createDirectory(at: serviceDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: sharedDirectory.appendingPathComponent("acme/orders/v1", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try Data("syntax = \"proto3\"; import \"acme/orders/v1/types.proto\";".utf8)
+            .write(to: serviceDirectory.appendingPathComponent("catalog.proto"))
+        try Data("syntax = \"proto3\";".utf8)
+            .write(to: sharedDirectory.appendingPathComponent("acme/orders/v1/types.proto"))
+
+        let staged = try SchemaSourceReader().stageProtoSources(
+            from: [serviceDirectory, sharedDirectory],
+            importRoots: [],
+            into: staging
+        )
+
+        #expect(staged.rootFiles.count == 2)
+        #expect(staged.importRoots.count == 2)
+        #expect(staged.importRoots.allSatisfy { $0.path.contains("/roots/directories/") })
+        #expect(staged.rootFiles.contains { $0.path.hasSuffix("/acme/orders/v1/types.proto") })
+    }
+
+    @Test func stagesSelectedFilesFromTheSameFolderUnderOneImportRoot() throws {
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let staging = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: temp)
+            try? FileManager.default.removeItem(at: staging)
+        }
+
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        let request = temp.appendingPathComponent("request.proto")
+        let types = temp.appendingPathComponent("types.proto")
+        try Data("syntax = \"proto3\"; import \"types.proto\";".utf8).write(to: request)
+        try Data("syntax = \"proto3\";".utf8).write(to: types)
+
+        let staged = try SchemaSourceReader().stageProtoSources(
+            from: [request, types],
+            importRoots: [],
+            into: staging
+        )
+
+        #expect(staged.rootFiles.count == 2)
+        #expect(staged.importRoots.count == 1)
+        #expect(staged.rootFiles.allSatisfy { $0.deletingLastPathComponent() == staged.importRoots[0] })
+    }
+}
+
+struct ProtocDiscoveryTests {
+    @Test func findsShellAndStandardMacOSCompilerLocations() {
+        let candidates = ProtocSchemaCompiler.installedProtocCandidates(
+            environment: [
+                "PROTOC": "/custom-tools/protoc",
+                "PATH": "/custom-bin:/usr/bin",
+            ]
+        )
+
+        let paths = candidates.map(\.path)
+        #expect(paths.first == "/custom-tools/protoc")
+        #expect(paths.contains("/custom-bin/protoc"))
+        #expect(paths.contains("/opt/homebrew/bin/protoc"))
+        #expect(paths.contains("/usr/local/bin/protoc"))
+    }
+
+    @Test func trimsPROTOCOverride() {
+        let candidates = ProtocSchemaCompiler.installedProtocCandidates(
+            environment: ["PROTOC": "  /custom-tools/protoc  "]
+        )
+
+        #expect(candidates.first?.path == "/custom-tools/protoc")
+    }
+
+    @Test func prefersBundledHelperLocation() {
+        let candidates = ProtocSchemaCompiler.bundledProtocCandidates()
+        #expect(candidates.contains { $0.lastPathComponent == "protoc" })
+        #expect(candidates.contains { $0.path.hasSuffix("Contents/Helpers/protoc") })
+    }
 }
 
 struct MigrationCompatibilityTests {

@@ -33,11 +33,29 @@ struct SchemaSourceReader: Sendable {
         var stagedRootFiles: [URL] = []
         var stagedImportRoots = Set<URL>()
 
-        for root in roots {
-            let destination = stagingRoot.appendingPathComponent("roots", isDirectory: true)
+        var fileRootDestinations: [String: URL] = [:]
+        var nextFileRootDestination = 0
+
+        for (index, root) in roots.enumerated() {
+            let destination: URL
+            if try isDirectory(root) {
+                destination = stagingRoot.appendingPathComponent("roots/directories/\(index)", isDirectory: true)
+            } else {
+                let parentPath = root.deletingLastPathComponent().standardizedFileURL.path
+                if let existing = fileRootDestinations[parentPath] {
+                    destination = existing
+                } else {
+                    destination = stagingRoot.appendingPathComponent("roots/files/\(nextFileRootDestination)", isDirectory: true)
+                    fileRootDestinations[parentPath] = destination
+                    nextFileRootDestination += 1
+                }
+            }
             try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
             let staged = try copyProtoTree(from: root, into: destination, depth: 0)
             stagedRootFiles.append(contentsOf: staged)
+            // Each chosen source is an import root, so independently selected contract trees
+            // resolve imports together without requiring a separate import-root selection step.
+            stagedImportRoots.insert(destination)
         }
 
         for importRoot in importRoots {
@@ -67,6 +85,18 @@ struct SchemaSourceReader: Sendable {
             throw SchemaSourceReaderError.limitExceeded("File '\(url.lastPathComponent)' exceeds size limit.")
         }
         return data
+    }
+
+    private func isDirectory(_ url: URL) throws -> Bool {
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+            throw SchemaSourceReaderError.pathNotFound(url.path)
+        }
+        let values = try url.resourceValues(forKeys: [.isSymbolicLinkKey])
+        if values.isSymbolicLink == true {
+            throw SchemaSourceReaderError.symlinkRejected(url.path)
+        }
+        return isDirectory.boolValue
     }
 
     private func copyProtoTree(from source: URL, into destinationRoot: URL, depth: Int) throws -> [URL] {

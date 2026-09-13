@@ -96,52 +96,74 @@ struct ProtocSchemaCompiler: ProtoSchemaCompiler, Sendable {
     }
 
     private func locateProtoc() throws -> URL {
-        if let bundled = Bundle.main.url(forResource: "protoc", withExtension: nil) {
-            return bundled
+        for candidate in Self.bundledProtocCandidates() where isRunnableProtoc(at: candidate) {
+            return candidate
         }
 
-        let helpersPath = Bundle.main.bundleURL
-            .deletingLastPathComponent()
-            .appendingPathComponent("Helpers/protoc")
-        if fileManager.isExecutableFile(atPath: helpersPath.path) {
-            return helpersPath
+        for candidate in Self.installedProtocCandidates(environment: ProcessInfo.processInfo.environment)
+            where isRunnableProtoc(at: candidate) {
+            return candidate
         }
 
-        let devHelpers = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("Helpers/protoc")
-        if fileManager.isExecutableFile(atPath: devHelpers.path) {
-            return devHelpers
+        throw DefinitionRefreshError.compilationFailed(
+            "protoc was not found inside Fetcher. Rebuild the app so its bundled protoc helper is embedded, or reinstall protobuf and rebuild. Host PATH and shell settings such as ~/.zshrc are not available to sandboxed macOS apps at runtime."
+        )
+    }
+
+    private func isRunnableProtoc(at url: URL) -> Bool {
+        fileManager.isExecutableFile(atPath: url.path)
+    }
+
+    static func bundledProtocCandidates() -> [URL] {
+        let bundleRoot = Bundle.main.bundleURL
+        return [
+            bundleRoot.appendingPathComponent("Contents/Helpers/protoc"),
+            bundleRoot.deletingLastPathComponent().appendingPathComponent("Helpers/protoc"),
+            Bundle.main.url(forResource: "protoc", withExtension: nil),
+            URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("Helpers/protoc"),
+        ].compactMap { $0 }
+    }
+
+    static func installedProtocCandidates(environment: [String: String]) -> [URL] {
+        var paths: [String] = []
+
+        if let override = environment["PROTOC"]?.trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty {
+            paths.append(override)
         }
 
-        let pathProtoc = URL(fileURLWithPath: "/usr/bin/which")
-        let whichProcess = Process()
-        whichProcess.executableURL = pathProtoc
-        whichProcess.arguments = ["protoc"]
-        let pipe = Pipe()
-        whichProcess.standardOutput = pipe
-        whichProcess.standardError = FileHandle.nullDevice
-        try? whichProcess.run()
-        whichProcess.waitUntilExit()
-        if whichProcess.terminationStatus == 0 {
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            if let path = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-               !path.isEmpty,
-               fileManager.isExecutableFile(atPath: path) {
-                return URL(fileURLWithPath: path)
-            }
+        if let path = environment["PATH"] {
+            paths.append(contentsOf: path.split(separator: ":").map { "\($0)/protoc" })
         }
 
-        throw DefinitionRefreshError.compilationFailed("protoc was not found. Bundle protoc or install it on PATH for local .proto compilation.")
+        // GUI apps often launch without a shell-configured PATH. These cover the standard
+        // Homebrew prefixes on Apple Silicon and Intel Macs, plus common package-manager paths.
+        paths.append(contentsOf: [
+            "/opt/homebrew/bin/protoc",
+            "/usr/local/bin/protoc",
+            "/opt/local/bin/protoc",
+            "/usr/bin/protoc",
+        ])
+
+        var seen = Set<String>()
+        return paths.compactMap { path in
+            guard path.hasPrefix("/"), seen.insert(path).inserted else { return nil }
+            return URL(fileURLWithPath: path)
+        }
     }
 
     private func bundledWellKnownPath() -> String? {
         let candidates = [
             Bundle.main.resourceURL?.appendingPathComponent("well-known", isDirectory: true),
+            Bundle.main.resourceURL?.appendingPathComponent("WellKnownProtos", isDirectory: true),
             Bundle.main.resourceURL?.appendingPathComponent("include", isDirectory: true),
+            URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("Resources/WellKnownProtos", isDirectory: true),
             URL(fileURLWithPath: #filePath)
                 .deletingLastPathComponent()
                 .appendingPathComponent("well-known", isDirectory: true)

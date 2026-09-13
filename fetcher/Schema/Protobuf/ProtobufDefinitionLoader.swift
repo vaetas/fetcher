@@ -85,33 +85,24 @@ struct ProtobufDefinitionLoader: DefinitionLoader, Sendable {
         let stagingRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("fetcher-proto-\(sourceID.uuidString)", isDirectory: true)
         try? FileManager.default.removeItem(at: stagingRoot)
+        defer { try? FileManager.default.removeItem(at: stagingRoot) }
 
-        var rootURLs: [URL] = []
-        for bookmark in source.rootBookmarkData {
-            try bookmarkStore.withAccessing(bookmark: bookmark) { url in
-                rootURLs.append(url)
-            }
+        let bookmarks = source.rootBookmarkData + source.importRootBookmarkData
+        let staged = try bookmarkStore.withAccessing(bookmarks: bookmarks) { urls in
+            let rootURLs = Array(urls.prefix(source.rootBookmarkData.count))
+            let importRootURLs = Array(urls.dropFirst(source.rootBookmarkData.count))
+            return try sourceReader.stageProtoSources(
+                from: rootURLs,
+                importRoots: importRootURLs,
+                into: stagingRoot
+            )
         }
-
-        var importRootURLs: [URL] = []
-        for bookmark in source.importRootBookmarkData {
-            try bookmarkStore.withAccessing(bookmark: bookmark) { url in
-                importRootURLs.append(url)
-            }
-        }
-
-        let staged = try sourceReader.stageProtoSources(
-            from: rootURLs,
-            importRoots: importRootURLs,
-            into: stagingRoot
-        )
 
         guard !staged.rootFiles.isEmpty else {
             throw DefinitionRefreshError.sourceUnavailable("No .proto files were found in the selected source.")
         }
 
         let compiled = try await compiler.compile(source: staged)
-        defer { try? FileManager.default.removeItem(at: stagingRoot) }
 
         return try writeDescriptorArtifacts(
             sourceID: sourceID,

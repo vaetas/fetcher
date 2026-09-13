@@ -156,4 +156,15 @@ struct SecurityScopedBookmarkStore: Sendable {
         }
         return try body(resolved.url)
     }
+
+    func withAccessing<T>(bookmarks: [Data], _ body: ([URL]) throws -> T) throws -> T {
+        let resolved = try bookmarks.map(resolveBookmark)
+        let accesses = resolved.map { $0.url.startAccessingSecurityScopedResource() }
+        defer {
+            for (index, resolvedURL) in resolved.enumerated().reversed() where accesses[index] {
+                resolvedURL.url.stopAccessingSecurityScopedResource()
+            }
+        }
+        return try body(resolved.map(\.url))
+    }
 }

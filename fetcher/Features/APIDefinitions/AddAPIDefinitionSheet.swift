@@ -18,6 +18,8 @@ struct AddAPIDefinitionSheet: View {
     @State private var remoteURL = ""
     @State private var localPath = ""
     @State private var localBookmarkData: Data?
+    @State private var localProtoPaths: [String] = []
+    @State private var localProtoBookmarkData: [Data] = []
     @State private var useAsProjectGraphQLSchema = true
 
     var body: some View {
@@ -53,7 +55,7 @@ struct AddAPIDefinitionSheet: View {
                         }
                     case .protobuf:
                         Picker("Source kind", selection: $protobufSourceKind) {
-                            ForEach(ProtobufDefinitionSourceKind.allCases, id: \.self) { sourceKind in
+                            ForEach(ProtobufDefinitionSourceKind.userSelectableCases, id: \.self) { sourceKind in
                                 Text(sourceKind.displayName).tag(sourceKind)
                             }
                         }
@@ -75,6 +77,10 @@ struct AddAPIDefinitionSheet: View {
             .onChange(of: graphqlSourceKind) { _, _ in
                 localPath = ""
                 localBookmarkData = nil
+            }
+            .onChange(of: protobufSourceKind) { _, _ in
+                localProtoPaths = []
+                localProtoBookmarkData = []
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -108,7 +114,9 @@ struct AddAPIDefinitionSheet: View {
             switch protobufSourceKind {
             case .serverReflection:
                 return !endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            case .localProtoFiles, .localProtoDirectory, .localDescriptorSet:
+            case .localProtoFiles, .localProtoDirectory:
+                return !localProtoBookmarkData.isEmpty
+            case .localDescriptorSet:
                 return !localPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             case .remoteProtoURL, .remoteDescriptorSetURL:
                 return !remoteURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -143,10 +151,61 @@ struct AddAPIDefinitionSheet: View {
         switch sourceKind {
         case .serverReflection:
             TextField("gRPC target (host:port)", text: $endpoint)
-        case .localProtoFiles, .localProtoDirectory, .localDescriptorSet:
+        case .localProtoFiles:
+            localProtoSourcePicker
+        case .localProtoDirectory:
+            // Existing definitions retain this source kind, while newly created definitions use the
+            // combined source picker above so files and folders can participate in one validation set.
+            localProtoSourcePicker
+        case .localDescriptorSet:
             TextField("Local path", text: $localPath)
         case .remoteProtoURL, .remoteDescriptorSetURL:
             TextField("Remote URL", text: $remoteURL)
+        }
+    }
+
+    private var localProtoSourcePicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if localProtoPaths.isEmpty {
+                ContentUnavailableView(
+                    "No gRPC sources selected",
+                    systemImage: "folder.badge.questionmark",
+                    description: Text("Choose one or more .proto files, folders, or a mixture of both.")
+                )
+            } else {
+                ForEach(Array(localProtoPaths.enumerated()), id: \.offset) { index, path in
+                    HStack {
+                        Text(path)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Button("Remove", systemImage: "minus.circle") {
+                            localProtoPaths.remove(at: index)
+                            localProtoBookmarkData.remove(at: index)
+                        }
+                        .labelStyle(.iconOnly)
+                        .accessibilityLabel("Remove \(URL(fileURLWithPath: path).lastPathComponent)")
+                    }
+                }
+            }
+
+            HStack {
+                Button(localProtoPaths.isEmpty ? "Choose Sources…" : "Add Sources…") {
+                    chooseLocalProtoSources()
+                }
+                .help("Choose multiple folders and .proto files. Every selected folder is also an import root.")
+
+                if !localProtoPaths.isEmpty {
+                    Button("Clear") {
+                        localProtoPaths = []
+                        localProtoBookmarkData = []
+                    }
+                }
+            }
+
+            Text("Select every local contract source needed for validation. Folders are scanned recursively and become import roots. For an import such as \"acme/orders/v1/types.proto\", select the folder containing \"acme\". You can choose multiple roots, for example \"catalog-api/proto\" and \"shared-contracts/proto\", in one selection.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -237,9 +296,9 @@ struct AddAPIDefinitionSheet: View {
         case .localProtoFiles:
             let config = ProtobufDefinitionConfig.localProto(
                 GRPCLocalProtoSource(
-                    rootBookmarkData: [],
+                    rootBookmarkData: localProtoBookmarkData,
                     importRootBookmarkData: [],
-                    displayPaths: [localPath],
+                    displayPaths: localProtoPaths,
                     importRootDisplayPaths: [],
                     isDirectory: false
                 )
@@ -248,9 +307,9 @@ struct AddAPIDefinitionSheet: View {
         case .localProtoDirectory:
             let config = ProtobufDefinitionConfig.localProto(
                 GRPCLocalProtoSource(
-                    rootBookmarkData: [],
+                    rootBookmarkData: localProtoBookmarkData,
                     importRootBookmarkData: [],
-                    displayPaths: [localPath],
+                    displayPaths: localProtoPaths,
                     importRootDisplayPaths: [],
                     isDirectory: true
                 )
@@ -298,6 +357,34 @@ struct AddAPIDefinitionSheet: View {
         } catch {
             localBookmarkData = nil
             localPath = ""
+        }
+    }
+
+    private func chooseLocalProtoSources() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = [UTType(filenameExtension: "proto")!]
+        panel.prompt = localProtoPaths.isEmpty ? "Choose Sources" : "Add Sources"
+        panel.message = "Choose all .proto files and folders required to validate this gRPC definition."
+
+        guard panel.runModal() == .OK else { return }
+
+        let bookmarkStore = SecurityScopedBookmarkStore()
+        var selections: [(path: String, bookmark: Data)] = []
+        for url in panel.urls {
+            do {
+                let bookmark = try bookmarkStore.makeBookmark(for: url)
+                selections.append((url.path, bookmark))
+            } catch {
+                continue
+            }
+        }
+
+        for selection in selections where !localProtoPaths.contains(selection.path) {
+            localProtoPaths.append(selection.path)
+            localProtoBookmarkData.append(selection.bookmark)
         }
     }
 
