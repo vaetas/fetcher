@@ -100,6 +100,24 @@ struct ProjectSettingsView: View {
                         Text(environment.name).tag(Optional(environment.id))
                     }
                 }
+
+                Section("GraphQL schema") {
+                    Picker("Shared schema", selection: Binding(
+                        get: { project.graphQLDefinitionSourceID },
+                        set: { definitionID in
+                            project.setSharedGraphQLDefinition(definitionID)
+                            try? modelContext.save()
+                        }
+                    )) {
+                        Text("None").tag(Optional<UUID>.none)
+                        ForEach(project.apiDefinitions.filter { $0.kind == .graphql }.sorted { $0.sortIndex < $1.sortIndex }, id: \.id) { definition in
+                            Text(definition.name).tag(Optional(definition.id))
+                        }
+                    }
+                    Text("This schema is used by every GraphQL request in the project for validation, completion, and the schema browser.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             .formStyle(.grouped)
             .tabItem { Text("General") }

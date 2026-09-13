@@ -24,7 +24,7 @@ struct GraphQLRequestEditor: View {
     @Bindable var request: RequestRecord
     let project: ProjectRecord
     let secretStore: any SecretStore
-    let definitions: [APIDefinitionRecord]
+    let sharedDefinition: APIDefinitionRecord?
     let operations: [GraphQLOperationInfo]
     var diagnostics: [EditorDiagnostic] = []
     var completionProvider: ((String, Int) -> [CompletionItem])?
@@ -32,10 +32,6 @@ struct GraphQLRequestEditor: View {
 
     @State private var selectedTab: GraphQLRequestEditorTab = .query
     @State private var saveTask: Task<Void, Never>?
-
-    private var graphqlDefinitions: [APIDefinitionRecord] {
-        definitions.filter { $0.kind == .graphql }
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -83,13 +79,15 @@ struct GraphQLRequestEditor: View {
                     }
                 }
 
-                if !graphqlDefinitions.isEmpty {
-                    Picker("Definition", selection: definitionSourceBinding) {
-                        Text("None").tag(Optional<UUID>.none)
-                        ForEach(graphqlDefinitions, id: \.id) { definition in
-                            Text(definition.name).tag(Optional(definition.id))
-                        }
-                    }
+                if let sharedDefinition {
+                    LabeledContent("Project schema", value: sharedDefinition.name)
+                    Text("Shared by every GraphQL request in \(project.name). Change it in Project Settings or API Definitions.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("No project schema is assigned. You can still send GraphQL requests, but schema validation and completion are unavailable.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 if !operations.isEmpty {
@@ -173,16 +171,6 @@ struct GraphQLRequestEditor: View {
             get: { ensureGraphQL().methodPreference },
             set: {
                 ensureGraphQL().methodPreference = $0
-                flushSave()
-            }
-        )
-    }
-
-    private var definitionSourceBinding: Binding<UUID?> {
-        Binding(
-            get: { ensureGraphQL().definitionSourceID },
-            set: {
-                ensureGraphQL().definitionSourceID = $0
                 flushSave()
             }
         )

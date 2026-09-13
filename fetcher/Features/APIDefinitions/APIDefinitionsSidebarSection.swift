@@ -7,6 +7,7 @@ struct APIDefinitionsSidebarSection: View {
     @Binding var selectedDefinitionID: UUID?
     var onRefresh: (APIDefinitionRecord) -> Void
     var onAdd: () -> Void
+    var onUseForProjectGraphQL: (APIDefinitionRecord) -> Void
 
     private var sortedDefinitions: [APIDefinitionRecord] {
         project.apiDefinitions.sorted { $0.sortIndex < $1.sortIndex }
@@ -20,6 +21,11 @@ struct APIDefinitionsSidebarSection: View {
                     .contextMenu {
                         Button("Refresh") {
                             onRefresh(definition)
+                        }
+                        if definition.kind == .graphql {
+                            Button("Use for Project GraphQL Requests") {
+                                onUseForProjectGraphQL(definition)
+                            }
                         }
                         Divider()
                         Button("Delete", role: .destructive) {
@@ -38,7 +44,14 @@ struct APIDefinitionsSidebarSection: View {
         HStack(spacing: 8) {
             DefinitionStatusIndicator(status: definition.status)
             VStack(alignment: .leading, spacing: 2) {
-                Text(definition.name)
+                HStack(spacing: 4) {
+                    Text(definition.name)
+                    if definition.id == project.graphQLDefinitionSourceID {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.tint)
+                            .accessibilityLabel("Shared project GraphQL schema")
+                    }
+                }
                 Text(definition.kind.displayName)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -56,6 +69,9 @@ struct APIDefinitionsSidebarSection: View {
     private func delete(_ definition: APIDefinitionRecord) {
         if selectedDefinitionID == definition.id {
             selectedDefinitionID = nil
+        }
+        if project.graphQLDefinitionSourceID == definition.id {
+            project.setSharedGraphQLDefinition(nil)
         }
         modelContext.delete(definition)
         project.updatedAt = .now

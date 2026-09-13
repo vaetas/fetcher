@@ -32,30 +32,17 @@ struct ProjectSidebarView: View {
         )) {
             Section("Projects") {
                 ForEach(filteredProjects, id: \.id) { project in
-                    DisclosureGroup(
-                        isExpanded: Binding(
-                            get: { commandCenter.expandedProjectIDs.contains(project.id) },
-                            set: { expanded in
-                                if expanded {
-                                    commandCenter.expandedProjectIDs.insert(project.id)
-                                } else {
-                                    commandCenter.expandedProjectIDs.remove(project.id)
-                                }
-                            }
-                        )
-                    ) {
+                    projectRow(project)
+                        .contextMenu {
+                            projectContextMenu(project)
+                        }
+
+                    if isExpanded(project) {
                         ForEach(filteredRequests(for: project), id: \.id) { request in
                             requestRow(request)
                                 .tag(request.id)
                                 .contextMenu {
-                                    Button("Duplicate") { duplicate(request) }
-                                    Button("Rename") {
-                                        beginRequestRename(request)
-                                    }
-                                    Divider()
-                                    Button("Delete", role: .destructive) {
-                                        confirmDeleteRequest = request
-                                    }
+                                    requestContextMenu(request)
                                 }
                         }
                         .onMove { indices, newOffset in
@@ -70,39 +57,12 @@ struct ProjectSidebarView: View {
                             },
                             onAdd: {
                                 showAddDefinitionForProject = project
+                            },
+                            onUseForProjectGraphQL: { definition in
+                                project.setSharedGraphQLDefinition(definition.id)
+                                try? modelContext.save()
                             }
                         )
-                    } label: {
-                        projectLabel(project)
-                    }
-                    .contextMenu {
-                        Button("New REST Request") {
-                            commandCenter.selectedProjectID = project.id
-                            createRequest(in: project, kind: .rest)
-                        }
-                        Button("New GraphQL Request") {
-                            commandCenter.selectedProjectID = project.id
-                            createRequest(in: project, kind: .graphql)
-                        }
-                        Button("New gRPC Request") {
-                            commandCenter.selectedProjectID = project.id
-                            createRequest(in: project, kind: .grpc)
-                        }
-                        Button("Add API Definition…") {
-                            commandCenter.selectedProjectID = project.id
-                            showAddDefinitionForProject = project
-                        }
-                        Button("Rename") {
-                            beginProjectRename(project)
-                        }
-                        Button("Project Settings") {
-                            commandCenter.selectedProjectID = project.id
-                            onOpenProjectSettings(project)
-                        }
-                        Divider()
-                        Button("Delete Project", role: .destructive) {
-                            confirmDeleteProject = project
-                        }
                     }
                 }
                 .onMove(perform: reorderProjects)
@@ -135,6 +95,17 @@ struct ProjectSidebarView: View {
                     showAddDefinitionForProject = nil
                     Task { await refreshDefinition(definition) }
                 }
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { selectedDefinition != nil },
+            set: { if !$0 { selectedDefinitionID = nil } }
+        )) {
+            if let definition = selectedDefinition {
+                DefinitionDetailSheet(
+                    definition: definition,
+                    onRefresh: { Task { await refreshDefinition(definition) } }
+                )
             }
         }
         .confirmationDialog(
@@ -181,6 +152,13 @@ struct ProjectSidebarView: View {
         }
     }
 
+    private var selectedDefinition: APIDefinitionRecord? {
+        guard let selectedDefinitionID else { return nil }
+        return projects
+            .flatMap(\.apiDefinitions)
+            .first(where: { $0.id == selectedDefinitionID })
+    }
+
     private func filteredRequests(for project: ProjectRecord) -> [RequestRecord] {
         let requests = project.requests.sorted { $0.sortIndex < $1.sortIndex }
         let query = commandCenter.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -196,7 +174,7 @@ struct ProjectSidebarView: View {
     }
 
     @ViewBuilder
-    private func projectLabel(_ project: ProjectRecord) -> some View {
+    private func projectRow(_ project: ProjectRecord) -> some View {
         if renamingProjectID == project.id {
             TextField("Project name", text: $draftName)
                 .textFieldStyle(.plain)
@@ -204,40 +182,136 @@ struct ProjectSidebarView: View {
                 .onSubmit { commitProjectRename() }
                 .onExitCommand { cancelProjectRename() }
         } else {
-            Label(project.name, systemImage: "folder")
-                .onTapGesture(count: 2) {
-                    beginProjectRename(project)
+            HStack(spacing: 6) {
+                Button {
+                    toggleExpansion(for: project)
+                } label: {
+                    Image(systemName: isExpanded(project) ? "chevron.down" : "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .frame(width: 12, height: 16)
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isExpanded(project) ? "Collapse \(project.name)" : "Expand \(project.name)")
+
+                Label {
+                    Text(project.name)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                } icon: {
+                    Image(systemName: "folder")
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                beginProjectRename(project)
+            }
         }
     }
 
     @ViewBuilder
     private func requestRow(_ request: RequestRecord) -> some View {
         HStack(spacing: 8) {
+            Color.clear
+                .frame(width: 18)
+                .accessibilityHidden(true)
+
             MethodBadge(method: badgeLabel(for: request))
                 .frame(width: 52, alignment: .leading)
             VStack(alignment: .leading, spacing: 2) {
                 Text(request.name)
                     .lineLimit(1)
+                    .truncationMode(.tail)
                 if let subtitle = subtitle(for: request), !subtitle.isEmpty {
                     Text(subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                        .truncationMode(.middle)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         .contentShape(Rectangle())
         .simultaneousGesture(TapGesture().onEnded {
-            commandCenter.selectedRequestID = request.id
-            commandCenter.selectedProjectID = request.project?.id
-            onSelectRequest(request)
+            select(request)
         })
         .simultaneousGesture(TapGesture(count: 2).onEnded {
             beginRequestRename(request)
         })
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(requestAccessibilityLabel(for: request))
+    }
+
+    private func select(_ request: RequestRecord) {
+        commandCenter.selectedRequestID = request.id
+        commandCenter.selectedProjectID = request.project?.id
+        onSelectRequest(request)
+    }
+
+    private func isExpanded(_ project: ProjectRecord) -> Bool {
+        commandCenter.expandedProjectIDs.contains(project.id)
+    }
+
+    private func toggleExpansion(for project: ProjectRecord) {
+        if isExpanded(project) {
+            commandCenter.expandedProjectIDs.remove(project.id)
+        } else {
+            commandCenter.expandedProjectIDs.insert(project.id)
+        }
+    }
+
+    @ViewBuilder
+    private func projectContextMenu(_ project: ProjectRecord) -> some View {
+        Button("New REST Request") {
+            commandCenter.selectedProjectID = project.id
+            createRequest(in: project, kind: .rest)
+        }
+        Button("New GraphQL Request") {
+            commandCenter.selectedProjectID = project.id
+            createRequest(in: project, kind: .graphql)
+        }
+        Button("New gRPC Request") {
+            commandCenter.selectedProjectID = project.id
+            createRequest(in: project, kind: .grpc)
+        }
+        Button("Add API Definition…") {
+            commandCenter.selectedProjectID = project.id
+            showAddDefinitionForProject = project
+        }
+        Button("Rename") {
+            beginProjectRename(project)
+        }
+        Button("Project Settings") {
+            commandCenter.selectedProjectID = project.id
+            onOpenProjectSettings(project)
+        }
+        Divider()
+        Button("Delete Project", role: .destructive) {
+            confirmDeleteProject = project
+        }
+    }
+
+    @ViewBuilder
+    private func requestContextMenu(_ request: RequestRecord) -> some View {
+        Button("Duplicate") { duplicate(request) }
+        Button("Rename") {
+            beginRequestRename(request)
+        }
+        Divider()
+        Button("Delete Request", role: .destructive) {
+            confirmDeleteRequest = request
+        }
+    }
+
+    private func requestAccessibilityLabel(for request: RequestRecord) -> String {
+        let name = RequestRecord.displayName(for: request.name)
+        if let subtitle = subtitle(for: request), !subtitle.isEmpty {
+            return "\(badgeLabel(for: request)) request, \(name), \(subtitle)"
+        }
+        return "\(badgeLabel(for: request)) request, \(name)"
     }
 
     private func badgeLabel(for request: RequestRecord) -> String {
@@ -357,6 +431,7 @@ struct ProjectSidebarView: View {
             modelContext.insert(rest)
         case .graphql:
             let graphql = GraphQLRequestRecord(requestID: request.id, endpoint: target.baseURL.isEmpty ? "http://localhost:4000/graphql" : "\(target.baseURL)/graphql")
+            graphql.definitionSourceID = target.graphQLDefinitionSourceID
             request.graphqlConfiguration = graphql
             modelContext.insert(graphql)
         case .grpc:
@@ -420,7 +495,7 @@ struct ProjectSidebarView: View {
                 variablesJSON: source?.variablesJSON ?? "{}",
                 methodPreference: source?.methodPreference ?? .post
             )
-            graphql.definitionSourceID = source?.definitionSourceID
+            graphql.definitionSourceID = project.graphQLDefinitionSourceID ?? source?.definitionSourceID
             graphql.operationName = source?.operationName
             graphql.extensionsJSON = source?.extensionsJSON
             copy.graphqlConfiguration = graphql

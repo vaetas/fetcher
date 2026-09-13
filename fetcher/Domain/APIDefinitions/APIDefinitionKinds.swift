@@ -68,6 +68,23 @@ enum GraphQLDefinitionSourceKind: String, Codable, Sendable, CaseIterable {
         case .remoteIntrospectionJSONURL: "Remote Introspection JSON"
         }
     }
+
+    var configurationDescription: String {
+        switch self {
+        case .endpointIntrospection:
+            "Ask a GraphQL endpoint for its current schema. Use this when the server permits introspection."
+        case .localSDLFile:
+            "Choose one local .graphql, .graphqls, or .gql schema file."
+        case .localSDLDirectory:
+            "Choose a folder of GraphQL schema files; Fetcher combines the supported files."
+        case .localIntrospectionJSON:
+            "Choose a saved JSON response containing a GraphQL __schema result."
+        case .remoteSDLURL:
+            "Download a schema-definition document from a URL. This is the option for a hosted .graphql file."
+        case .remoteIntrospectionJSONURL:
+            "Download a saved GraphQL introspection JSON response from a URL."
+        }
+    }
 }
 
 enum ProtobufDefinitionSourceKind: String, Codable, Sendable, CaseIterable {

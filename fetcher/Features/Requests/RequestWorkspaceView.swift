@@ -53,6 +53,9 @@ struct RequestWorkspaceView: View {
                     refreshGraphQLIntelligence(request: request, project: project)
                     refreshProtobufSchema(request: request, project: project)
                 }
+                .onChange(of: project.graphQLDefinitionSourceID) { _, _ in
+                    refreshGraphQLIntelligence(request: request, project: project)
+                }
                 .onChange(of: commandCenter.focusURLToken) { _, _ in
                     urlFocused = true
                 }
@@ -236,7 +239,7 @@ struct RequestWorkspaceView: View {
                 request: request,
                 project: project,
                 secretStore: secretStore,
-                definitions: project.apiDefinitions.filter { $0.kind == .graphql },
+                sharedDefinition: project.graphQLDefinition,
                 operations: graphqlOperations,
                 diagnostics: workspace.editorDiagnostics,
                 completionProvider: { document, offset in
@@ -381,7 +384,7 @@ struct RequestWorkspaceView: View {
     }
 
     private func loadGraphQLSchema(for request: RequestRecord, project: ProjectRecord) async -> GraphQLSchemaSnapshot? {
-        guard let definitionID = request.graphqlConfiguration?.definitionSourceID,
+        guard let definitionID = project.graphQLDefinitionSourceID ?? request.graphqlConfiguration?.definitionSourceID,
               let definition = project.apiDefinitions.first(where: { $0.id == definitionID }),
               let fingerprint = definition.activeFingerprint else {
             return nil

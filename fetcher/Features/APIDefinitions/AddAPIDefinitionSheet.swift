@@ -1,5 +1,7 @@
+import AppKit
 import SwiftData
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct AddAPIDefinitionSheet: View {
     @Environment(\.modelContext) private var modelContext
@@ -15,6 +17,8 @@ struct AddAPIDefinitionSheet: View {
     @State private var endpoint = ""
     @State private var remoteURL = ""
     @State private var localPath = ""
+    @State private var localBookmarkData: Data?
+    @State private var useAsProjectGraphQLSchema = true
 
     var body: some View {
         NavigationStack {
@@ -37,6 +41,16 @@ struct AddAPIDefinitionSheet: View {
                             }
                         }
                         sourceFields(for: graphqlSourceKind)
+                        Text(graphqlSourceKind.configurationDescription)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        if graphqlSourceKind == .remoteSDLURL {
+                            Button("Use Literal Club Example") {
+                                useLiteralClubExample()
+                            }
+                            .help("Prefill the hosted schema file supplied in the GraphQL example.")
+                        }
                     case .protobuf:
                         Picker("Source kind", selection: $protobufSourceKind) {
                             ForEach(ProtobufDefinitionSourceKind.allCases, id: \.self) { sourceKind in
@@ -46,9 +60,22 @@ struct AddAPIDefinitionSheet: View {
                         sourceFields(for: protobufSourceKind)
                     }
                 }
+
+                if kind == .graphql {
+                    Section("Project schema") {
+                        Toggle("Use for all GraphQL requests in this project", isOn: $useAsProjectGraphQLSchema)
+                        Text("One project schema drives validation, completion, and documentation for every nested GraphQL request.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
             .formStyle(.grouped)
             .navigationTitle("Add API Definition")
+            .onChange(of: graphqlSourceKind) { _, _ in
+                localPath = ""
+                localBookmarkData = nil
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -73,7 +100,7 @@ struct AddAPIDefinitionSheet: View {
             case .endpointIntrospection:
                 return !endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             case .localSDLFile, .localSDLDirectory, .localIntrospectionJSON:
-                return !localPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                return localBookmarkData != nil
             case .remoteSDLURL, .remoteIntrospectionJSONURL:
                 return !remoteURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
@@ -95,9 +122,19 @@ struct AddAPIDefinitionSheet: View {
         case .endpointIntrospection:
             TextField("GraphQL endpoint", text: $endpoint)
         case .localSDLFile, .localSDLDirectory, .localIntrospectionJSON:
-            TextField("Local path", text: $localPath)
+            HStack {
+                Text(localPath.isEmpty ? "No local source selected" : localPath)
+                    .foregroundStyle(localPath.isEmpty ? .secondary : .primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                Button(sourceKind == .localSDLDirectory ? "Choose Folder…" : "Choose File…") {
+                    chooseLocalGraphQLSource(for: sourceKind)
+                }
+            }
         case .remoteSDLURL, .remoteIntrospectionJSONURL:
             TextField("Remote URL", text: $remoteURL)
+                .textContentType(.URL)
         }
     }
 
@@ -140,6 +177,9 @@ struct AddAPIDefinitionSheet: View {
             project: project
         )
         modelContext.insert(definition)
+        if kind == .graphql, useAsProjectGraphQLSchema {
+            project.setSharedGraphQLDefinition(definition.id)
+        }
         project.updatedAt = .now
         try? modelContext.save()
         onAdded?(definition)
@@ -156,17 +196,17 @@ struct AddAPIDefinitionSheet: View {
             return try encoder.encode(config)
         case .localSDLFile:
             let config = GraphQLDefinitionConfig.localSDL(
-                GraphQLLocalSDLSource(bookmarkData: nil, displayPath: localPath, isDirectory: false)
+                GraphQLLocalSDLSource(bookmarkData: localBookmarkData, displayPath: localPath, isDirectory: false)
             )
             return try encoder.encode(config)
         case .localSDLDirectory:
             let config = GraphQLDefinitionConfig.localSDL(
-                GraphQLLocalSDLSource(bookmarkData: nil, displayPath: localPath, isDirectory: true)
+                GraphQLLocalSDLSource(bookmarkData: localBookmarkData, displayPath: localPath, isDirectory: true)
             )
             return try encoder.encode(config)
         case .localIntrospectionJSON:
             let config = GraphQLDefinitionConfig.localIntrospectionJSON(
-                GraphQLLocalIntrospectionJSONSource(bookmarkData: nil, displayPath: localPath)
+                GraphQLLocalIntrospectionJSONSource(bookmarkData: localBookmarkData, displayPath: localPath)
             )
             return try encoder.encode(config)
         case .remoteSDLURL:
@@ -232,5 +272,42 @@ struct AddAPIDefinitionSheet: View {
             )
             return try encoder.encode(config)
         }
+    }
+
+    private func chooseLocalGraphQLSource(for sourceKind: GraphQLDefinitionSourceKind) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = sourceKind != .localSDLDirectory
+        panel.canChooseDirectories = sourceKind == .localSDLDirectory
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        if sourceKind != .localSDLDirectory {
+            if sourceKind == .localIntrospectionJSON {
+                panel.allowedContentTypes = [.json]
+            } else {
+                panel.allowedContentTypes = [
+                    UTType(filenameExtension: "graphql")!,
+                    UTType(filenameExtension: "graphqls")!,
+                    UTType(filenameExtension: "gql")!,
+                ]
+            }
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            localBookmarkData = try SecurityScopedBookmarkStore().makeBookmark(for: url)
+            localPath = url.path
+        } catch {
+            localBookmarkData = nil
+            localPath = ""
+        }
+    }
+
+    private func useLiteralClubExample() {
+        kind = .graphql
+        graphqlSourceKind = .remoteSDLURL
+        if trimmedName.isEmpty {
+            name = "Literal Club"
+        }
+        remoteURL = "https://raw.githubusercontent.com/api-evangelist/literal/refs/heads/main/graphql/literal-schema.graphql"
+        useAsProjectGraphQLSchema = true
     }
 }

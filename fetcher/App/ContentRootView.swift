@@ -201,6 +201,7 @@ struct ContentRootView: View {
         case .graphql:
             let endpoint = target.baseURL.isEmpty ? "http://localhost:4000/graphql" : "\(target.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")))/graphql"
             let graphql = GraphQLRequestRecord(requestID: request.id, endpoint: endpoint)
+            graphql.definitionSourceID = target.graphQLDefinitionSourceID
             request.graphqlConfiguration = graphql
             modelContext.insert(graphql)
         case .grpc:
@@ -256,7 +257,7 @@ struct ContentRootView: View {
                 variablesJSON: source?.variablesJSON ?? "{}",
                 methodPreference: source?.methodPreference ?? .post
             )
-            graphql.definitionSourceID = source?.definitionSourceID
+            graphql.definitionSourceID = project.graphQLDefinitionSourceID ?? source?.definitionSourceID
             graphql.operationName = source?.operationName
             copy.graphqlConfiguration = graphql
             modelContext.insert(graphql)

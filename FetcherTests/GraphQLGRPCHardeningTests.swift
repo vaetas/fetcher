@@ -112,10 +112,13 @@ struct MigrationCompatibilityTests {
             project: project
         )
         context.insert(definition)
+        project.setSharedGraphQLDefinition(definition.id)
         try context.save()
 
         #expect(project.requests.count == 3)
         #expect(project.apiDefinitions.count == 1)
+        #expect(project.graphQLDefinitionSourceID == definition.id)
+        #expect(gql.definitionSourceID == definition.id)
         #expect(restRequest.protocolKind == .rest)
         #expect(gqlRequest.protocolKind == .graphql)
         #expect(grpcRequest.protocolKind == .grpc)

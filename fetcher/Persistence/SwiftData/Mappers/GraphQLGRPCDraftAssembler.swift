@@ -52,7 +52,8 @@ extension RequestDraftAssembler {
             requestID: request.id,
             projectID: project.id,
             name: request.name,
-            definitionSourceID: graphql?.definitionSourceID.map(DefinitionSourceID.init(rawValue:)),
+            definitionSourceID: (project.graphQLDefinitionSourceID ?? graphql?.definitionSourceID)
+                .map(DefinitionSourceID.init(rawValue:)),
             endpoint: graphql?.endpoint ?? "",
             document: graphql?.document ?? "query {\n  \n}\n",
             operationName: graphql?.operationName,

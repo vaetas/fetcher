@@ -93,7 +93,7 @@ struct GraphQLDefinitionLoader: DefinitionLoader, Sendable {
         source: GraphQLIntrospectionSource,
         artifactStore: SchemaArtifactStore
     ) async throws -> DefinitionRefreshResult {
-        guard let endpointURL = URL(string: source.endpoint.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+        guard let endpointURL = httpURL(from: source.endpoint) else {
             throw DefinitionRefreshError.invalidConfiguration("Introspection endpoint URL is invalid.")
         }
 
@@ -128,8 +128,8 @@ struct GraphQLDefinitionLoader: DefinitionLoader, Sendable {
         source: GraphQLRemoteDocumentSource,
         artifactStore: SchemaArtifactStore
     ) async throws -> DefinitionRefreshResult {
-        guard let url = URL(string: source.url.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-            throw DefinitionRefreshError.invalidConfiguration("Remote document URL is invalid.")
+        guard let url = httpURL(from: source.url) else {
+            throw DefinitionRefreshError.invalidConfiguration("Remote schema URL must be an HTTP or HTTPS URL with a host.")
         }
 
         var request = URLRequest(url: url)
@@ -161,6 +161,9 @@ struct GraphQLDefinitionLoader: DefinitionLoader, Sendable {
         }
         if sdl.utf8.count > SchemaResourceLimits.maxGraphQLSDLBytes {
             throw DefinitionRefreshError.limitExceeded("Remote SDL exceeds size limit.")
+        }
+        guard containsTypeSystemDefinition(sdl) else {
+            throw DefinitionRefreshError.compilationFailed("Remote document is a GraphQL operation, not a schema definition.")
         }
 
         let snapshot = try languageService.loadSDL(sdl)
@@ -315,6 +318,17 @@ struct GraphQLDefinitionLoader: DefinitionLoader, Sendable {
     private func containsTypeSystemDefinition(_ source: String) -> Bool {
         let keywords = ["type ", "interface ", "union ", "enum ", "input ", "scalar ", "schema ", "directive "]
         return keywords.contains { source.contains($0) }
+    }
+
+    private func httpURL(from value: String) -> URL? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              url.host != nil else {
+            return nil
+        }
+        return url
     }
 
     private struct IntrospectionRequest: Encodable {

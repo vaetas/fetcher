@@ -180,7 +180,6 @@ private struct GraphQLLexer {
     }
 
     private mutating func readString() -> String {
-        advance() // opening quote
         if peekMatches("\"\"\"") {
             advance(count: 3)
             var value = ""
@@ -194,6 +193,7 @@ private struct GraphQLLexer {
             }
             return blockStringValue(value)
         }
+        advance() // opening quote
         var value = ""
         while index < source.endIndex {
             if source[index] == "\\" {

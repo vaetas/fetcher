@@ -26,6 +26,31 @@ struct GraphQLLanguageServiceTests {
         #expect(schema.rootQueryFields.contains { $0.name == "book" })
     }
 
+    @Test func loadsHostedSDLShapeUsedByLiteralClub() throws {
+        let sdl = """
+        \"\"\"
+        Literal Club GraphQL API Schema
+        \"\"\"
+        scalar DateTime
+
+        type Book {
+          id: ID!
+          title: String!
+          publishedDate: DateTime
+        }
+
+        type Query {
+          \"\"\"Look up a book by its URL slug.\"\"\"
+          bookBySlug(slug: String!): Book
+        }
+        """
+
+        let schema = try service.loadSDL(sdl)
+        #expect(schema.queryType?.name == "Query")
+        #expect(schema.rootQueryFields.contains { $0.name == "bookBySlug" })
+        #expect(schema.rootQueryFields.first(where: { $0.name == "bookBySlug" })?.description == "Look up a book by its URL slug.")
+    }
+
     @Test func parsesValidQueryDocument() throws {
         let source = try fixtureString("valid-query.graphql")
         let document = try service.parseDocument(source)

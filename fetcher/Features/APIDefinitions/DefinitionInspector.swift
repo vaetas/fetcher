@@ -64,3 +64,87 @@ struct DefinitionInspector: View {
         .padding(8)
     }
 }
+
+struct DefinitionDetailSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let definition: APIDefinitionRecord
+    var onRefresh: () -> Void
+
+    @State private var graphQLSchema: GraphQLSchemaSnapshot?
+    @State private var schemaLoadError: String?
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if definition.kind == .graphql {
+                    TabView {
+                        DefinitionInspector(definition: definition, onRefresh: onRefresh)
+                            .tabItem { Label("Details", systemImage: "info.circle") }
+
+                        Group {
+                            if let schemaLoadError {
+                                ContentUnavailableView(
+                                    "Schema Documentation Unavailable",
+                                    systemImage: "doc.text.magnifyingglass",
+                                    description: Text(schemaLoadError)
+                                )
+                            } else {
+                                GraphQLSchemaBrowser(schema: graphQLSchema)
+                            }
+                        }
+                        .tabItem { Label("Documentation", systemImage: "book") }
+                    }
+                } else {
+                    DefinitionInspector(definition: definition, onRefresh: onRefresh)
+                }
+            }
+            .navigationTitle(definition.name)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .task(id: definition.activeFingerprint) {
+                await loadGraphQLSchema()
+            }
+        }
+        .frame(minWidth: 720, minHeight: 520)
+    }
+
+    private func loadGraphQLSchema() async {
+        guard definition.kind == .graphql else { return }
+        guard let fingerprint = definition.activeFingerprint else {
+            graphQLSchema = nil
+            schemaLoadError = "Refresh this API definition to make its documentation available."
+            return
+        }
+
+        let definitionID = definition.id
+        let result = await Task.detached(priority: .userInitiated) {
+            do {
+                let store = try SchemaArtifactStore()
+                let data = try store.readNormalized(
+                    sourceID: definitionID,
+                    fingerprint: fingerprint,
+                    relativePath: "schema.graphql"
+                )
+                let source = String(decoding: data, as: UTF8.self)
+                return Result<GraphQLSchemaSnapshot, Error>.success(
+                    try BuiltinGraphQLLanguageService().loadSDL(source)
+                )
+            } catch {
+                return Result<GraphQLSchemaSnapshot, Error>.failure(error)
+            }
+        }.value
+
+        switch result {
+        case .success(let schema):
+            graphQLSchema = schema
+            schemaLoadError = nil
+        case .failure:
+            graphQLSchema = nil
+            schemaLoadError = "The saved schema snapshot could not be read. Refresh the API definition and try again."
+        }
+    }
+}
