@@ -55,7 +55,11 @@ struct ContentRootView: View {
         NavigationSplitView {
             ProjectSidebarView(
                 commandCenter: commandCenter,
-                onSelectRequest: { _ in }
+                onSelectRequest: { _ in },
+                onOpenProjectSettings: { project in
+                    commandCenter.selectedProjectID = project.id
+                    showProjectSettings = true
+                }
             )
             .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
         } detail: {

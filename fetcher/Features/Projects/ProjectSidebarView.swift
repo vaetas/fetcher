@@ -6,6 +6,7 @@ struct ProjectSidebarView: View {
     @Query(sort: \ProjectRecord.sortIndex) private var projects: [ProjectRecord]
     @Bindable var commandCenter: AppCommandCenter
     var onSelectRequest: (RequestRecord) -> Void
+    var onOpenProjectSettings: (ProjectRecord) -> Void
 
     @State private var renamingProjectID: UUID?
     @State private var renamingRequestID: UUID?
@@ -67,6 +68,10 @@ struct ProjectSidebarView: View {
                         }
                         Button("Rename") {
                             beginProjectRename(project)
+                        }
+                        Button("Project Settings") {
+                            commandCenter.selectedProjectID = project.id
+                            onOpenProjectSettings(project)
                         }
                         Divider()
                         Button("Delete Project", role: .destructive) {
