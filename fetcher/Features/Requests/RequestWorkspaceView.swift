@@ -11,6 +11,9 @@ struct RequestWorkspaceView: View {
     @State private var customMethod = ""
     @State private var showCustomMethod = false
     @State private var jsonError: String?
+    @State private var graphqlOperations: [GraphQLOperationInfo] = []
+    @State private var graphqlSchema: GraphQLSchemaSnapshot?
+    @State private var protobufSchema: ProtobufSchemaSnapshot?
     @FocusState private var urlFocused: Bool
 
     private let methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
@@ -18,6 +21,7 @@ struct RequestWorkspaceView: View {
         "Accept", "Authorization", "Content-Type", "User-Agent",
         "If-None-Match", "If-Modified-Since", "Cache-Control", "Origin", "Referer",
     ]
+    private let languageService = GraphQLLanguageServiceFactory.makeDefault()
 
     var body: some View {
         Group {
@@ -30,29 +34,29 @@ struct RequestWorkspaceView: View {
                             requestEditor(request: request, project: project)
                                 .frame(height: max(180, geo.size.height * commandCenter.requestResponseSplit))
                             splitHandle(totalHeight: geo.size.height)
-                            ResponseContainerView(
-                                workspace: workspace,
-                                selectedTab: $commandCenter.selectedResponseTab
-                            )
-                            .frame(maxHeight: .infinity)
+                            responsePane(request: request)
+                                .frame(maxHeight: .infinity)
                         }
                     }
                 }
                 .onAppear {
-                    workspace.bind(requestID: request.id)
+                    workspace.bind(requestID: request.id, protocolKind: request.protocolKind)
                     wireDraftBuilder(request: request, project: project)
                     syncPathParametersIfNeeded(request: request)
+                    refreshGraphQLIntelligence(request: request, project: project)
+                    refreshProtobufSchema(request: request, project: project)
                 }
                 .onChange(of: request.id) { _, _ in
-                    workspace.bind(requestID: request.id)
+                    workspace.bind(requestID: request.id, protocolKind: request.protocolKind)
                     wireDraftBuilder(request: request, project: project)
                     syncPathParametersIfNeeded(request: request)
+                    refreshGraphQLIntelligence(request: request, project: project)
+                    refreshProtobufSchema(request: request, project: project)
                 }
                 .onChange(of: commandCenter.focusURLToken) { _, _ in
                     urlFocused = true
                 }
                 .onChange(of: workspace.jsonFormatToken) { _, _ in
-                    // Body editor observes via environment-less token; format in place if possible.
                     if let rest = request.restConfiguration, rest.bodyMode == .json {
                         if let formatted = try? RESTBodyEncoder.formatJSON(rest.bodyText) {
                             rest.bodyText = formatted
@@ -67,6 +71,21 @@ struct RequestWorkspaceView: View {
                     message: "Create a project and request from the sidebar, or choose an existing request to edit and send."
                 )
             }
+        }
+    }
+
+    @ViewBuilder
+    private func responsePane(request: RequestRecord) -> some View {
+        switch request.protocolKind {
+        case .rest:
+            ResponseContainerView(
+                workspace: workspace,
+                selectedTab: $commandCenter.selectedResponseTab
+            )
+        case .graphql:
+            GraphQLResponseView(artifact: workspace.graphqlResponse)
+        case .grpc:
+            GRPCResponseView(artifact: workspace.grpcResponse)
         }
     }
 
@@ -87,6 +106,62 @@ struct RequestWorkspaceView: View {
 
     @ViewBuilder
     private func header(request: RequestRecord, project: ProjectRecord) -> some View {
+        switch request.protocolKind {
+        case .rest:
+            restHeader(request: request, project: project)
+        case .graphql:
+            protocolSendHeader(title: "GraphQL", subtitle: request.graphqlConfiguration?.endpoint ?? "")
+        case .grpc:
+            protocolSendHeader(
+                title: "gRPC",
+                subtitle: [
+                    request.grpcConfiguration?.serviceFullName,
+                    request.grpcConfiguration?.methodName
+                ]
+                .compactMap { $0 }
+                .filter { !$0.isEmpty }
+                .joined(separator: "/")
+            )
+        }
+    }
+
+    private func protocolSendHeader(title: String, subtitle: String) -> some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.headline)
+            if !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(.body.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            sendButton
+        }
+        .padding(12)
+    }
+
+    private var sendButton: some View {
+        Button {
+            if workspace.executionState == .running {
+                workspace.cancel()
+            } else {
+                workspace.send()
+            }
+        } label: {
+            if workspace.executionState == .running {
+                Label("Stop", systemImage: "stop.fill")
+            } else {
+                Label("Send", systemImage: "paperplane.fill")
+            }
+        }
+        .disabled(workspace.schemaValidationBlocksSend && workspace.executionState != .running)
+        .help(workspace.executionState == .running ? "Cancel request" : "Send request")
+        .accessibilityLabel(workspace.executionState == .running ? "Stop request" : "Send request")
+    }
+
+    @ViewBuilder
+    private func restHeader(request: RequestRecord, project: ProjectRecord) -> some View {
         let rest = bindingRest(for: request)
         HStack(spacing: 8) {
             Picker("Method", selection: Binding(
@@ -135,21 +210,7 @@ struct RequestWorkspaceView: View {
                 }
             }
 
-            Button {
-                if workspace.executionState == .running {
-                    workspace.cancel()
-                } else {
-                    workspace.send()
-                }
-            } label: {
-                if workspace.executionState == .running {
-                    Label("Stop", systemImage: "stop.fill")
-                } else {
-                    Label("Send", systemImage: "paperplane.fill")
-                }
-            }
-            .help(workspace.executionState == .running ? "Cancel request" : "Send request")
-            .accessibilityLabel(workspace.executionState == .running ? "Stop request" : "Send request")
+            sendButton
         }
         .padding(12)
         .alert("Custom Method", isPresented: $showCustomMethod) {
@@ -167,6 +228,46 @@ struct RequestWorkspaceView: View {
 
     @ViewBuilder
     private func requestEditor(request: RequestRecord, project: ProjectRecord) -> some View {
+        switch request.protocolKind {
+        case .rest:
+            restEditor(request: request, project: project)
+        case .graphql:
+            GraphQLRequestEditor(
+                request: request,
+                project: project,
+                secretStore: secretStore,
+                definitions: project.apiDefinitions.filter { $0.kind == .graphql },
+                operations: graphqlOperations,
+                diagnostics: workspace.editorDiagnostics,
+                completionProvider: { document, offset in
+                    guard let schema = graphqlSchema else { return [] }
+                    return GraphQLCompletionEngine(languageService: languageService)
+                        .completions(document: document, cursorUTF16Offset: offset, schema: schema)
+                },
+                onDocumentChange: { document in
+                    refreshGraphQLOperations(document: document)
+                    scheduleGraphQLValidation(document: document)
+                }
+            )
+        case .grpc:
+            GRPCRequestEditor(
+                request: request,
+                definitions: project.apiDefinitions.filter { $0.kind == .protobuf },
+                schemaSnapshot: protobufSchema,
+                onInsertExampleBody: {
+                    insertGRPCExampleBody(request: request)
+                    if let json = request.grpcConfiguration?.bodyJSON {
+                        scheduleProtoJSONValidation(json: json, request: request)
+                    }
+                }
+            )
+            .onChange(of: request.grpcConfiguration?.bodyJSON ?? "") { _, json in
+                scheduleProtoJSONValidation(json: json, request: request)
+            }
+        }
+    }
+
+    private func restEditor(request: RequestRecord, project: ProjectRecord) -> some View {
         VStack(spacing: 0) {
             Picker("Request section", selection: $commandCenter.selectedRequestTab) {
                 ForEach(RequestEditorTab.allCases) { tab in
@@ -221,7 +322,8 @@ struct RequestWorkspaceView: View {
     }
 
     private func syncPathParametersIfNeeded(request: RequestRecord) {
-        guard let endpoint = request.restConfiguration?.endpoint else { return }
+        guard request.protocolKind == .rest,
+              let endpoint = request.restConfiguration?.endpoint else { return }
         syncPathParameters(request: request, endpoint: endpoint)
     }
 
@@ -241,6 +343,139 @@ struct RequestWorkspaceView: View {
             }
         }
         try? modelContext.save()
+    }
+
+    private func refreshGraphQLIntelligence(request: RequestRecord, project: ProjectRecord) {
+        guard request.protocolKind == .graphql else { return }
+        let document = request.graphqlConfiguration?.document ?? ""
+        refreshGraphQLOperations(document: document)
+        scheduleGraphQLValidation(document: document)
+        Task {
+            graphqlSchema = await loadGraphQLSchema(for: request, project: project)
+        }
+    }
+
+    private func refreshGraphQLOperations(document: String) {
+        graphqlOperations = (try? languageService.parseDocument(document))?.operations ?? []
+    }
+
+    private func scheduleGraphQLValidation(document: String) {
+        let schema = graphqlSchema
+        workspace.scheduleValidation {
+            var diagnostics = languageService.syntaxDiagnostics(in: document)
+            var blocksSend = diagnostics.contains { $0.severity == .error }
+            if let schema, let parsed = try? languageService.parseDocument(document) {
+                let schemaDiagnostics = languageService.validate(document: parsed, against: schema)
+                diagnostics.append(contentsOf: schemaDiagnostics)
+                if schemaDiagnostics.contains(where: { $0.severity == .error }) {
+                    blocksSend = true
+                }
+            }
+            return (diagnostics, blocksSend)
+        }
+    }
+
+    private func loadGraphQLSchema(for request: RequestRecord, project: ProjectRecord) async -> GraphQLSchemaSnapshot? {
+        guard let definitionID = request.graphqlConfiguration?.definitionSourceID,
+              let definition = project.apiDefinitions.first(where: { $0.id == definitionID }),
+              let fingerprint = definition.activeFingerprint else {
+            return nil
+        }
+        do {
+            let store = try SchemaArtifactStore()
+            let data = try store.readNormalized(
+                sourceID: definition.id,
+                fingerprint: fingerprint,
+                relativePath: "schema.graphql"
+            )
+            let sdl = String(data: data, encoding: .utf8) ?? ""
+            return try languageService.loadSDL(sdl)
+        } catch {
+            return nil
+        }
+    }
+
+    private func refreshProtobufSchema(request: RequestRecord, project: ProjectRecord) {
+        guard request.protocolKind == .grpc else {
+            protobufSchema = nil
+            return
+        }
+        Task {
+            protobufSchema = await loadProtobufSchema(for: request, project: project)
+        }
+    }
+
+    private func loadProtobufSchema(for request: RequestRecord, project: ProjectRecord) async -> ProtobufSchemaSnapshot? {
+        guard let definitionID = request.grpcConfiguration?.definitionSourceID,
+              let definition = project.apiDefinitions.first(where: { $0.id == definitionID }),
+              let fingerprint = definition.activeFingerprint else {
+            return nil
+        }
+        do {
+            let store = try SchemaArtifactStore()
+            let data = try store.readNormalized(
+                sourceID: definition.id,
+                fingerprint: fingerprint,
+                relativePath: "descriptor-set.pb"
+            )
+            return try ProtobufDescriptorIndex.build(from: data, id: SchemaSnapshotID(rawValue: definition.activeSnapshotID ?? UUID()))
+        } catch {
+            return nil
+        }
+    }
+
+    private func insertGRPCExampleBody(request: RequestRecord) {
+        guard let grpc = request.grpcConfiguration,
+              let schema = protobufSchema,
+              let method = schema.method(serviceFullName: grpc.serviceFullName, methodName: grpc.methodName),
+              let message = schema.messagesByName[method.inputType.fullName.trimmingCharacters(in: CharacterSet(charactersIn: "."))]
+                ?? schema.messagesByName[method.inputType.fullName] else {
+            return
+        }
+        var object: [String: Any] = [:]
+        for field in message.fields.prefix(12) {
+            switch field.cardinality {
+            case .repeated:
+                object[field.jsonName] = []
+            case .map:
+                object[field.jsonName] = [String: Any]()
+            default:
+                if field.typeName.contains("bool") {
+                    object[field.jsonName] = false
+                } else if field.typeName.contains("string") || field.typeName.contains("bytes") {
+                    object[field.jsonName] = ""
+                } else if field.typeName.contains("int") || field.typeName.contains("fixed") || field.typeName.contains("double") || field.typeName.contains("float") {
+                    object[field.jsonName] = 0
+                } else {
+                    object[field.jsonName] = [String: Any]()
+                }
+            }
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
+           let text = String(data: data, encoding: .utf8) {
+            grpc.bodyJSON = text
+            touch(request)
+        }
+    }
+
+    private func scheduleProtoJSONValidation(json: String, request: RequestRecord) {
+        let schema = protobufSchema
+        let service = request.grpcConfiguration?.serviceFullName ?? ""
+        let methodName = request.grpcConfiguration?.methodName ?? ""
+        workspace.scheduleValidation {
+            guard let schema,
+                  let method = schema.method(serviceFullName: service, methodName: methodName) else {
+                return ([], false)
+            }
+            let runtime = BuiltinDynamicProtobufRuntime()
+            let registry = try? runtime.buildRegistry(descriptorSet: schema.descriptorSetData)
+            guard let registry else { return ([], false) }
+            let diagnostics = runtime.validateJSON(json, messageType: method.inputType, registry: registry)
+                .map {
+                    EditorDiagnostic(severity: .error, message: $0.message, range: $0.range, source: "protojson")
+                }
+            return (diagnostics, diagnostics.contains { $0.severity == .error })
+        }
     }
 
     private func wireDraftBuilder(request: RequestRecord, project: ProjectRecord) {
@@ -275,7 +510,7 @@ struct RequestWorkspaceView: View {
                     secretValues[refID] = string
                 }
             }
-            return RequestDraftAssembler.makeDraft(
+            return try RequestDraftAssembler.makeAPIDraft(
                 request: request,
                 project: project,
                 environment: environment,

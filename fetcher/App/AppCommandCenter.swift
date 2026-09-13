@@ -6,6 +6,8 @@ enum AppCommandID: Hashable, Sendable {
     case sendRequest
     case cancelRequest
     case newRequest
+    case newGraphQLRequest
+    case newGRPCRequest
     case newProject
     case duplicateRequest
     case renameRequest
@@ -45,6 +47,8 @@ final class AppCommandCenter {
     weak var workspace: RequestWorkspaceModel?
     var onNewProject: (() -> Void)?
     var onNewRequest: (() -> Void)?
+    var onNewGraphQLRequest: (() -> Void)?
+    var onNewGRPCRequest: (() -> Void)?
     var onDuplicateRequest: (() -> Void)?
     var focusURLToken = UUID()
     var renameSelectedRequestToken = UUID()
@@ -61,6 +65,10 @@ final class AppCommandCenter {
             workspace?.cancel()
         case .newRequest:
             onNewRequest?()
+        case .newGraphQLRequest:
+            onNewGraphQLRequest?()
+        case .newGRPCRequest:
+            onNewGRPCRequest?()
         case .newProject:
             onNewProject?()
         case .duplicateRequest:

@@ -1,0 +1,12 @@
+query ListBooks {
+  books {
+    id
+    title
+  }
+}
+
+mutation CreateBook {
+  createBook(title: "Test") {
+    id
+  }
+}

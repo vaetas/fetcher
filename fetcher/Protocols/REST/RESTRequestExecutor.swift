@@ -1,44 +1,5 @@
 import Foundation
 
-final class RequestExecutionHandle: @unchecked Sendable {
-    let id: UUID
-    private let onCancel: @Sendable () -> Void
-
-    init(id: UUID = UUID(), onCancel: @escaping @Sendable () -> Void) {
-        self.id = id
-        self.onCancel = onCancel
-    }
-
-    func cancel() {
-        onCancel()
-    }
-}
-
-protocol APIRequestExecutor: Sendable {
-    var kind: APIProtocolKind { get }
-
-    func execute(
-        draft: RESTRequestDraft,
-        context: ExecutionContext
-    ) async throws -> APIExecutionResult
-}
-
-actor RequestExecutorRegistry {
-    private var executors: [APIProtocolKind: any APIRequestExecutor]
-
-    init(executors: [APIProtocolKind: any APIRequestExecutor] = [:]) {
-        self.executors = executors
-    }
-
-    func register(_ executor: any APIRequestExecutor) {
-        executors[executor.kind] = executor
-    }
-
-    func executor(for kind: APIProtocolKind) -> (any APIRequestExecutor)? {
-        executors[kind]
-    }
-}
-
 struct RESTRequestExecutor: APIRequestExecutor {
     let kind: APIProtocolKind = .rest
     private let builder: RESTRequestBuilder
@@ -53,6 +14,16 @@ struct RESTRequestExecutor: APIRequestExecutor {
         self.builder = builder
         self.sessionManager = sessionManager
         self.maxResponseBytes = maxResponseBytes
+    }
+
+    func execute(
+        draft: APIRequestDraft,
+        context: ExecutionContext
+    ) async throws -> APIExecutionResult {
+        guard case .rest(let restDraft) = draft else {
+            throw APIExecutionFailure.unsupportedProtocol(draft.protocolKind)
+        }
+        return try await execute(draft: restDraft, context: context)
     }
 
     func execute(draft: RESTRequestDraft, context: ExecutionContext) async throws -> APIExecutionResult {

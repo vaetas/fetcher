@@ -13,6 +13,9 @@ struct ProjectSidebarView: View {
     @State private var draftName = ""
     @State private var confirmDeleteProject: ProjectRecord?
     @State private var confirmDeleteRequest: RequestRecord?
+    @State private var showAddDefinitionForProject: ProjectRecord?
+    @State private var selectedDefinitionID: UUID?
+    @State private var definitionRefreshCoordinator: DefinitionRefreshCoordinator?
     @FocusState private var renameFieldFocused: Bool
 
     var body: some View {
@@ -58,13 +61,36 @@ struct ProjectSidebarView: View {
                         .onMove { indices, newOffset in
                             reorderRequests(in: project, from: indices, to: newOffset)
                         }
+
+                        APIDefinitionsSidebarSection(
+                            project: project,
+                            selectedDefinitionID: $selectedDefinitionID,
+                            onRefresh: { definition in
+                                Task { await refreshDefinition(definition) }
+                            },
+                            onAdd: {
+                                showAddDefinitionForProject = project
+                            }
+                        )
                     } label: {
                         projectLabel(project)
                     }
                     .contextMenu {
-                        Button("New Request") {
+                        Button("New REST Request") {
                             commandCenter.selectedProjectID = project.id
-                            createRequest(in: project)
+                            createRequest(in: project, kind: .rest)
+                        }
+                        Button("New GraphQL Request") {
+                            commandCenter.selectedProjectID = project.id
+                            createRequest(in: project, kind: .graphql)
+                        }
+                        Button("New gRPC Request") {
+                            commandCenter.selectedProjectID = project.id
+                            createRequest(in: project, kind: .grpc)
+                        }
+                        Button("Add API Definition…") {
+                            commandCenter.selectedProjectID = project.id
+                            showAddDefinitionForProject = project
                         }
                         Button("Rename") {
                             beginProjectRename(project)
@@ -99,6 +125,18 @@ struct ProjectSidebarView: View {
                 onCancel: cancelRequestRename
             )
         }
+        .sheet(isPresented: Binding(
+            get: { showAddDefinitionForProject != nil },
+            set: { if !$0 { showAddDefinitionForProject = nil } }
+        )) {
+            if let project = showAddDefinitionForProject {
+                AddAPIDefinitionSheet(project: project) { definition in
+                    selectedDefinitionID = definition.id
+                    showAddDefinitionForProject = nil
+                    Task { await refreshDefinition(definition) }
+                }
+            }
+        }
         .confirmationDialog(
             "Delete Project?",
             isPresented: Binding(
@@ -129,6 +167,9 @@ struct ProjectSidebarView: View {
         } message: { request in
             Text("Delete “\(request.name)”?")
         }
+        .task {
+            await ensureRefreshCoordinator()
+        }
     }
 
     private var filteredProjects: [ProjectRecord] {
@@ -148,6 +189,8 @@ struct ProjectSidebarView: View {
             request.name.localizedCaseInsensitiveContains(query)
                 || (request.restConfiguration?.endpoint.localizedCaseInsensitiveContains(query) ?? false)
                 || (request.restConfiguration?.method.localizedCaseInsensitiveContains(query) ?? false)
+                || (request.graphqlConfiguration?.endpoint.localizedCaseInsensitiveContains(query) ?? false)
+                || (request.grpcConfiguration?.serviceFullName.localizedCaseInsensitiveContains(query) ?? false)
                 || project.name.localizedCaseInsensitiveContains(query)
         }
     }
@@ -171,13 +214,13 @@ struct ProjectSidebarView: View {
     @ViewBuilder
     private func requestRow(_ request: RequestRecord) -> some View {
         HStack(spacing: 8) {
-            MethodBadge(method: request.restConfiguration?.method ?? "GET")
+            MethodBadge(method: badgeLabel(for: request))
                 .frame(width: 52, alignment: .leading)
             VStack(alignment: .leading, spacing: 2) {
                 Text(request.name)
                     .lineLimit(1)
-                if let endpoint = request.restConfiguration?.endpoint, !endpoint.isEmpty {
-                    Text(endpoint)
+                if let subtitle = subtitle(for: request), !subtitle.isEmpty {
+                    Text(subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -195,6 +238,26 @@ struct ProjectSidebarView: View {
         .simultaneousGesture(TapGesture(count: 2).onEnded {
             beginRequestRename(request)
         })
+    }
+
+    private func badgeLabel(for request: RequestRecord) -> String {
+        switch request.protocolKind {
+        case .rest: request.restConfiguration?.method ?? "GET"
+        case .graphql: "GQL"
+        case .grpc: "RPC"
+        }
+    }
+
+    private func subtitle(for request: RequestRecord) -> String? {
+        switch request.protocolKind {
+        case .rest: request.restConfiguration?.endpoint
+        case .graphql: request.graphqlConfiguration?.endpoint
+        case .grpc:
+            [request.grpcConfiguration?.serviceFullName, request.grpcConfiguration?.methodName]
+                .compactMap { $0 }
+                .filter { !$0.isEmpty }
+                .joined(separator: "/")
+        }
     }
 
     private func renameSelectedRequest() {
@@ -266,11 +329,11 @@ struct ProjectSidebarView: View {
         modelContext.insert(environment)
         commandCenter.selectedProjectID = project.id
         commandCenter.expandedProjectIDs.insert(project.id)
-        createRequest(in: project)
+        createRequest(in: project, kind: .rest)
         try? modelContext.save()
     }
 
-    func createRequest(in project: ProjectRecord? = nil) {
+    func createRequest(in project: ProjectRecord? = nil, kind: APIProtocolKind = .rest) {
         let target = project ?? projects.first(where: { $0.id == commandCenter.selectedProjectID }) ?? projects.first
         guard let target else {
             createProject()
@@ -278,16 +341,30 @@ struct ProjectSidebarView: View {
         }
         let request = RequestRecord(
             name: RequestRecord.defaultName,
+            protocolKind: kind,
             sortIndex: (target.requests.map(\.sortIndex).max() ?? 0) + 1,
             project: target
         )
-        let rest = RESTRequestRecord(requestID: request.id)
         let auth = RequestAuthRecord(requestID: request.id)
-        request.restConfiguration = rest
         request.auth = auth
         modelContext.insert(request)
-        modelContext.insert(rest)
         modelContext.insert(auth)
+
+        switch kind {
+        case .rest:
+            let rest = RESTRequestRecord(requestID: request.id)
+            request.restConfiguration = rest
+            modelContext.insert(rest)
+        case .graphql:
+            let graphql = GraphQLRequestRecord(requestID: request.id, endpoint: target.baseURL.isEmpty ? "http://localhost:4000/graphql" : "\(target.baseURL)/graphql")
+            request.graphqlConfiguration = graphql
+            modelContext.insert(graphql)
+        case .grpc:
+            let grpc = GRPCRequestRecord(requestID: request.id)
+            request.grpcConfiguration = grpc
+            modelContext.insert(grpc)
+        }
+
         commandCenter.selectedProjectID = target.id
         commandCenter.selectedRequestID = request.id
         commandCenter.expandedProjectIDs.insert(target.id)
@@ -305,18 +382,9 @@ struct ProjectSidebarView: View {
         guard let project = request.project else { return }
         let copy = RequestRecord(
             name: "\(request.name) Copy",
+            protocolKind: request.protocolKind,
             sortIndex: (project.requests.map(\.sortIndex).max() ?? 0) + 1,
             project: project
-        )
-        let restSource = request.restConfiguration
-        let rest = RESTRequestRecord(
-            requestID: copy.id,
-            method: restSource?.method ?? "GET",
-            endpoint: restSource?.endpoint ?? "/",
-            bodyMode: restSource?.bodyMode ?? .none,
-            bodyText: restSource?.bodyText ?? "",
-            timeoutSeconds: restSource?.timeoutSeconds,
-            redirectPolicy: restSource?.redirectPolicy ?? .follow
         )
         let authSource = request.auth
         let auth = RequestAuthRecord(
@@ -325,8 +393,56 @@ struct ProjectSidebarView: View {
             nonSecretJSON: authSource?.nonSecretJSON ?? Data("{}".utf8),
             secretReferenceIDs: authSource?.secretReferenceIDs ?? []
         )
-        copy.restConfiguration = rest
         copy.auth = auth
+        modelContext.insert(copy)
+        modelContext.insert(auth)
+
+        switch request.protocolKind {
+        case .rest:
+            let restSource = request.restConfiguration
+            let rest = RESTRequestRecord(
+                requestID: copy.id,
+                method: restSource?.method ?? "GET",
+                endpoint: restSource?.endpoint ?? "/",
+                bodyMode: restSource?.bodyMode ?? .none,
+                bodyText: restSource?.bodyText ?? "",
+                timeoutSeconds: restSource?.timeoutSeconds,
+                redirectPolicy: restSource?.redirectPolicy ?? .follow
+            )
+            copy.restConfiguration = rest
+            modelContext.insert(rest)
+        case .graphql:
+            let source = request.graphqlConfiguration
+            let graphql = GraphQLRequestRecord(
+                requestID: copy.id,
+                endpoint: source?.endpoint ?? "",
+                document: source?.document ?? "query {\n  \n}\n",
+                variablesJSON: source?.variablesJSON ?? "{}",
+                methodPreference: source?.methodPreference ?? .post
+            )
+            graphql.definitionSourceID = source?.definitionSourceID
+            graphql.operationName = source?.operationName
+            graphql.extensionsJSON = source?.extensionsJSON
+            copy.graphqlConfiguration = graphql
+            modelContext.insert(graphql)
+        case .grpc:
+            let source = request.grpcConfiguration
+            let grpc = GRPCRequestRecord(
+                requestID: copy.id,
+                target: source?.target ?? "localhost:50051",
+                serviceFullName: source?.serviceFullName ?? "",
+                methodName: source?.methodName ?? "",
+                bodyJSON: source?.bodyJSON ?? "{}"
+            )
+            grpc.definitionSourceID = source?.definitionSourceID
+            grpc.outboundMessages = source?.outboundMessages ?? []
+            grpc.deadlineSeconds = source?.deadlineSeconds
+            grpc.useTLS = source?.useTLS ?? false
+            grpc.authorityOverride = source?.authorityOverride
+            copy.grpcConfiguration = grpc
+            modelContext.insert(grpc)
+        }
+
         for parameter in request.parameters.sorted(by: { $0.sortIndex < $1.sortIndex }) {
             let param = RequestParameterRecord(
                 kind: parameter.kind,
@@ -338,9 +454,6 @@ struct ProjectSidebarView: View {
             )
             modelContext.insert(param)
         }
-        modelContext.insert(copy)
-        modelContext.insert(rest)
-        modelContext.insert(auth)
         commandCenter.selectedRequestID = copy.id
         onSelectRequest(copy)
         try? modelContext.save()
@@ -379,6 +492,58 @@ struct ProjectSidebarView: View {
             request.sortIndex = Double(index)
         }
         try? modelContext.save()
+    }
+
+    private func ensureRefreshCoordinator() async {
+        if definitionRefreshCoordinator != nil { return }
+        do {
+            let store = try SchemaArtifactStore()
+            let coordinator = DefinitionRefreshCoordinator(artifactStore: store)
+            await coordinator.register(GraphQLDefinitionLoader())
+            await coordinator.register(ProtobufDefinitionLoader())
+            definitionRefreshCoordinator = coordinator
+        } catch {
+            definitionRefreshCoordinator = nil
+        }
+    }
+
+    private func refreshDefinition(_ definition: APIDefinitionRecord) async {
+        await ensureRefreshCoordinator()
+        guard let coordinator = definitionRefreshCoordinator else {
+            definition.status = .unavailable
+            definition.lastErrorMessage = "Unable to initialize schema artifact store."
+            try? modelContext.save()
+            return
+        }
+
+        definition.status = .loading
+        definition.lastAttemptAt = .now
+        definition.updatedAt = .now
+        try? modelContext.save()
+
+        do {
+            let result = try await coordinator.refresh(
+                sourceID: definition.id,
+                kind: definition.kind,
+                configData: definition.configJSON
+            )
+            definition.activeFingerprint = result.fingerprint
+            definition.activeSnapshotID = result.snapshotID
+            definition.lastSuccessfulRefreshAt = .now
+            definition.status = .ready
+            definition.lastErrorMessage = nil
+            definition.updatedAt = .now
+            try? modelContext.save()
+        } catch {
+            if definition.activeFingerprint != nil {
+                definition.status = .staleWithError
+            } else {
+                definition.status = .unavailable
+            }
+            definition.lastErrorMessage = (error as? DefinitionRefreshError)?.message ?? error.localizedDescription
+            definition.updatedAt = .now
+            try? modelContext.save()
+        }
     }
 }
 

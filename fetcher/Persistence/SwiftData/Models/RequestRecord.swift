@@ -25,6 +25,12 @@ final class RequestRecord {
     @Relationship(deleteRule: .cascade, inverse: \RESTRequestRecord.request)
     var restConfiguration: RESTRequestRecord?
 
+    @Relationship(deleteRule: .cascade, inverse: \GraphQLRequestRecord.request)
+    var graphqlConfiguration: GraphQLRequestRecord?
+
+    @Relationship(deleteRule: .cascade, inverse: \GRPCRequestRecord.request)
+    var grpcConfiguration: GRPCRequestRecord?
+
     @Relationship(deleteRule: .cascade, inverse: \RequestParameterRecord.request)
     var parameters: [RequestParameterRecord]
 

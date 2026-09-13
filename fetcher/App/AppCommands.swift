@@ -14,6 +14,14 @@ struct AppCommands: Commands {
                 commandCenter.perform(.newRequest)
             }
             .keyboardShortcut("n", modifiers: .command)
+
+            Button("New GraphQL Request") {
+                commandCenter.perform(.newGraphQLRequest)
+            }
+
+            Button("New gRPC Request") {
+                commandCenter.perform(.newGRPCRequest)
+            }
         }
 
         CommandMenu("Request") {

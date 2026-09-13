@@ -1,0 +1,15 @@
+"""A book in the library."""
+type Book {
+  id: ID!
+  title: String!
+  author: String
+}
+
+type Query {
+  book(id: ID!): Book
+  books: [Book!]!
+}
+
+type Mutation {
+  createBook(title: String!, author: String): Book!
+}

@@ -23,7 +23,9 @@ struct ContentRootView: View {
         .onAppear {
             commandCenter.workspace = workspace
             commandCenter.onNewProject = { createProject() }
-            commandCenter.onNewRequest = { createRequest() }
+            commandCenter.onNewRequest = { createRequest(kind: .rest) }
+            commandCenter.onNewGraphQLRequest = { createRequest(kind: .graphql) }
+            commandCenter.onNewGRPCRequest = { createRequest(kind: .grpc) }
             commandCenter.onDuplicateRequest = { duplicateRequest() }
             restoreSelectionIfNeeded()
         }
@@ -72,11 +74,20 @@ struct ContentRootView: View {
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
                     Button {
-                        createRequest()
+                        createRequest(kind: .rest)
                     } label: {
                         Label("New Request", systemImage: "plus")
                     }
-                    .help("New Request")
+                    .help("New REST Request")
+
+                    Menu {
+                        Button("REST") { createRequest(kind: .rest) }
+                        Button("GraphQL") { createRequest(kind: .graphql) }
+                        Button("gRPC") { createRequest(kind: .grpc) }
+                    } label: {
+                        Label("New Protocol Request", systemImage: "plus.square.on.square")
+                    }
+                    .help("Create request by protocol")
 
                     if let project = selectedProject {
                         Picker(
@@ -165,7 +176,7 @@ struct ContentRootView: View {
         try? modelContext.save()
     }
 
-    private func createRequest(in project: ProjectRecord? = nil) {
+    private func createRequest(in project: ProjectRecord? = nil, kind: APIProtocolKind = .rest) {
         let target = project ?? selectedProject ?? projects.first
         guard let target else {
             createProject()
@@ -173,16 +184,31 @@ struct ContentRootView: View {
         }
         let request = RequestRecord(
             name: RequestRecord.defaultName,
+            protocolKind: kind,
             sortIndex: (target.requests.map(\.sortIndex).max() ?? 0) + 1,
             project: target
         )
-        let rest = RESTRequestRecord(requestID: request.id, endpoint: "/api/books")
         let auth = RequestAuthRecord(requestID: request.id)
-        request.restConfiguration = rest
         request.auth = auth
         modelContext.insert(request)
-        modelContext.insert(rest)
         modelContext.insert(auth)
+
+        switch kind {
+        case .rest:
+            let rest = RESTRequestRecord(requestID: request.id, endpoint: "/api/books")
+            request.restConfiguration = rest
+            modelContext.insert(rest)
+        case .graphql:
+            let endpoint = target.baseURL.isEmpty ? "http://localhost:4000/graphql" : "\(target.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")))/graphql"
+            let graphql = GraphQLRequestRecord(requestID: request.id, endpoint: endpoint)
+            request.graphqlConfiguration = graphql
+            modelContext.insert(graphql)
+        case .grpc:
+            let grpc = GRPCRequestRecord(requestID: request.id)
+            request.grpcConfiguration = grpc
+            modelContext.insert(grpc)
+        }
+
         commandCenter.selectedProjectID = target.id
         commandCenter.selectedRequestID = request.id
         commandCenter.expandedProjectIDs.insert(target.id)
@@ -193,18 +219,9 @@ struct ContentRootView: View {
         guard let request = selectedRequest, let project = request.project else { return }
         let copy = RequestRecord(
             name: "\(request.name) Copy",
+            protocolKind: request.protocolKind,
             sortIndex: (project.requests.map(\.sortIndex).max() ?? 0) + 1,
             project: project
-        )
-        let restSource = request.restConfiguration
-        let rest = RESTRequestRecord(
-            requestID: copy.id,
-            method: restSource?.method ?? "GET",
-            endpoint: restSource?.endpoint ?? "/",
-            bodyMode: restSource?.bodyMode ?? .none,
-            bodyText: restSource?.bodyText ?? "",
-            timeoutSeconds: restSource?.timeoutSeconds,
-            redirectPolicy: restSource?.redirectPolicy ?? .follow
         )
         let auth = RequestAuthRecord(
             requestID: copy.id,
@@ -212,8 +229,51 @@ struct ContentRootView: View {
             nonSecretJSON: request.auth?.nonSecretJSON ?? Data("{}".utf8),
             secretReferenceIDs: request.auth?.secretReferenceIDs ?? []
         )
-        copy.restConfiguration = rest
         copy.auth = auth
+        modelContext.insert(copy)
+        modelContext.insert(auth)
+
+        switch request.protocolKind {
+        case .rest:
+            let restSource = request.restConfiguration
+            let rest = RESTRequestRecord(
+                requestID: copy.id,
+                method: restSource?.method ?? "GET",
+                endpoint: restSource?.endpoint ?? "/",
+                bodyMode: restSource?.bodyMode ?? .none,
+                bodyText: restSource?.bodyText ?? "",
+                timeoutSeconds: restSource?.timeoutSeconds,
+                redirectPolicy: restSource?.redirectPolicy ?? .follow
+            )
+            copy.restConfiguration = rest
+            modelContext.insert(rest)
+        case .graphql:
+            let source = request.graphqlConfiguration
+            let graphql = GraphQLRequestRecord(
+                requestID: copy.id,
+                endpoint: source?.endpoint ?? "",
+                document: source?.document ?? "query {\n  \n}\n",
+                variablesJSON: source?.variablesJSON ?? "{}",
+                methodPreference: source?.methodPreference ?? .post
+            )
+            graphql.definitionSourceID = source?.definitionSourceID
+            graphql.operationName = source?.operationName
+            copy.graphqlConfiguration = graphql
+            modelContext.insert(graphql)
+        case .grpc:
+            let source = request.grpcConfiguration
+            let grpc = GRPCRequestRecord(
+                requestID: copy.id,
+                target: source?.target ?? "localhost:50051",
+                serviceFullName: source?.serviceFullName ?? "",
+                methodName: source?.methodName ?? "",
+                bodyJSON: source?.bodyJSON ?? "{}"
+            )
+            grpc.definitionSourceID = source?.definitionSourceID
+            copy.grpcConfiguration = grpc
+            modelContext.insert(grpc)
+        }
+
         for parameter in request.parameters.sorted(by: { $0.sortIndex < $1.sortIndex }) {
             modelContext.insert(
                 RequestParameterRecord(
@@ -226,9 +286,6 @@ struct ContentRootView: View {
                 )
             )
         }
-        modelContext.insert(copy)
-        modelContext.insert(rest)
-        modelContext.insert(auth)
         commandCenter.selectedRequestID = copy.id
         try? modelContext.save()
     }

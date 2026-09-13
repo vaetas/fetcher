@@ -23,6 +23,9 @@ final class ProjectRecord {
     @Relationship(deleteRule: .cascade, inverse: \EnvironmentRecord.project)
     var environments: [EnvironmentRecord]
 
+    @Relationship(deleteRule: .cascade, inverse: \APIDefinitionRecord.project)
+    var apiDefinitions: [APIDefinitionRecord]
+
     init(
         id: UUID = UUID(),
         name: String,
@@ -44,6 +47,7 @@ final class ProjectRecord {
         self.defaultHeadersJSON = Data("[]".utf8)
         self.requests = []
         self.environments = []
+        self.apiDefinitions = []
     }
 
     var defaultRedirectPolicy: RedirectPolicy {

@@ -22,6 +22,21 @@ struct RequestInspectorView: View {
                         LabeledContent("Body", value: rest.bodyMode.displayName)
                     }
                 }
+                if let graphql = request.graphqlConfiguration {
+                    Section("GraphQL") {
+                        LabeledContent("Endpoint", value: graphql.endpoint)
+                        LabeledContent("Operation", value: graphql.operationName ?? "(unnamed)")
+                        LabeledContent("Method", value: graphql.methodPreference.displayName)
+                    }
+                }
+                if let grpc = request.grpcConfiguration {
+                    Section("gRPC") {
+                        LabeledContent("Target", value: grpc.target)
+                        LabeledContent("Service", value: grpc.serviceFullName)
+                        LabeledContent("Method", value: grpc.methodName)
+                        LabeledContent("TLS", value: grpc.useTLS ? "Enabled" : "Plaintext")
+                    }
+                }
             } else {
                 Text("Select a request to inspect metadata.")
                     .foregroundStyle(.secondary)
