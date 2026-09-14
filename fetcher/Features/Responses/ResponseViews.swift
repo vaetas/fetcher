@@ -2,8 +2,21 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+struct ResponseSaveAsButton: View {
+    let requestName: String
+    let data: Data
+    let descriptor: ResponseBodySaveDescriptor
+
+    var body: some View {
+        Button("Save As…") {
+            ResponseBodySaveSupport.save(data: data, requestName: requestName, descriptor: descriptor)
+        }
+    }
+}
+
 struct ResponseContainerView: View {
     @Bindable var workspace: RequestWorkspaceModel
+    let requestName: String
     @Binding var selectedTab: ResponseViewerTab
 
     var body: some View {
@@ -75,6 +88,17 @@ struct ResponseContainerView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            if let response = workspace.response,
+               ResponseBodySaveSupport.isSaveable(response) {
+                ResponseSaveAsButton(
+                    requestName: requestName,
+                    data: response.body,
+                    descriptor: ResponseBodySaveSupport.descriptor(
+                        for: response,
+                        bodyIsJSON: workspace.responseBodyIsJSON
+                    )
+                )
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -135,11 +159,6 @@ struct ResponseBodyView: View {
                     NSPasteboard.general.setString(bodyText, forType: .string)
                 }
                 .disabled(workspace.formattedResponseBody == nil)
-
-                Button("Save As…") {
-                    saveBody()
-                }
-                .disabled(workspace.response == nil)
 
                 if workspace.isFormattingResponse {
                     ProgressView()
@@ -216,16 +235,6 @@ struct ResponseBodyView: View {
             if activeMatchIndex >= count {
                 activeMatchIndex = max(0, count - 1)
             }
-        }
-    }
-
-    private func saveBody() {
-        guard let data = workspace.response?.body else { return }
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.data, .json, .plainText]
-        panel.nameFieldStringValue = "response.bin"
-        if panel.runModal() == .OK, let url = panel.url {
-            try? data.write(to: url)
         }
     }
 }

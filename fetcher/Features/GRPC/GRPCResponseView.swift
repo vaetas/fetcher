@@ -18,6 +18,7 @@ enum GRPCResponseDetailTab: String, CaseIterable, Identifiable {
 
 struct GRPCResponseView: View {
     let artifact: GRPCResponseArtifact?
+    let requestName: String
     @State private var selectedMessageID: UUID?
     @State private var detailTab: GRPCResponseDetailTab = .metadata
 
@@ -80,6 +81,15 @@ struct GRPCResponseView: View {
                 }
             }
             Spacer()
+            if let artifact,
+               let message = selectedMessage,
+               ResponseBodySaveSupport.isSaveable(artifact, message: message) {
+                ResponseSaveAsButton(
+                    requestName: requestName,
+                    data: Data(message.json.utf8),
+                    descriptor: ResponseBodySaveSupport.descriptor(for: message)
+                )
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

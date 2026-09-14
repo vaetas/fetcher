@@ -173,6 +173,167 @@ struct AuthStrategyTests {
     }
 }
 
+struct ResponseBodySaveSupportTests {
+    @Test func allowsSaveForSuccessfulNonEmptyBody() {
+        let response = sampleResponse(statusCode: 200, body: Data("hello".utf8), mimeType: "text/plain")
+        #expect(ResponseBodySaveSupport.isSaveable(response))
+    }
+
+    @Test func rejectsEmptyBody() {
+        let response = sampleResponse(statusCode: 200, body: Data(), mimeType: "text/plain")
+        #expect(!ResponseBodySaveSupport.isSaveable(response))
+    }
+
+    @Test func rejectsNonSuccessStatus() {
+        let response = sampleResponse(statusCode: 404, body: Data("missing".utf8), mimeType: "text/plain")
+        #expect(!ResponseBodySaveSupport.isSaveable(response))
+    }
+
+    @Test func rejectsResponsesWithExecutionError() {
+        let response = sampleResponse(
+            statusCode: 200,
+            body: Data("hello".utf8),
+            mimeType: "text/plain",
+            error: .cancelled
+        )
+        #expect(!ResponseBodySaveSupport.isSaveable(response))
+    }
+
+    @Test func buildsFilenameFromRequestNameAndTimestamp() {
+        let filename = ResponseBodySaveSupport.defaultFilename(
+            requestName: "Get Books",
+            fileExtension: "json",
+            timestamp: 1_726_307_890
+        )
+        #expect(filename == "get-books-1726307890.json")
+    }
+
+    @Test func sanitizesRequestNameForFilesystem() {
+        let slug = ResponseBodySaveSupport.sanitizedRequestName("  List Books/API  ")
+        #expect(slug == "list-books-api")
+    }
+
+    @Test func usesResponseFallbackForBlankRequestName() {
+        let filename = ResponseBodySaveSupport.defaultFilename(
+            requestName: "   ",
+            fileExtension: "json",
+            timestamp: 42
+        )
+        #expect(filename == "response-42.json")
+    }
+
+    @Test func suggestsJSONExtensionFromMimeType() {
+        let ext = ResponseBodySaveSupport.fileExtension(mimeType: "application/json", bodyIsJSON: false)
+        #expect(ext == "json")
+    }
+
+    @Test func suggestsJSONExtensionWhenDetectedFromBody() {
+        let ext = ResponseBodySaveSupport.fileExtension(mimeType: "text/plain", bodyIsJSON: true)
+        #expect(ext == "json")
+    }
+
+    @Test func suggestsExtensionFromMimeType() {
+        let ext = ResponseBodySaveSupport.fileExtension(mimeType: "image/png", bodyIsJSON: false)
+        #expect(ext == "png")
+    }
+
+    @Test func includesMimeTypeInAllowedContentTypes() {
+        let types = ResponseBodySaveSupport.allowedContentTypes(mimeType: "application/json", bodyIsJSON: false)
+        #expect(types.contains(where: { $0.conforms(to: .json) }))
+    }
+
+    @Test func allowsSaveForSuccessfulGraphQLResponse() {
+        let response = GraphQLResponseArtifact(
+            id: UUID(),
+            requestID: UUID(),
+            startedAt: .now,
+            finishedAt: .now,
+            endpointURL: URL(string: "https://example.com/graphql"),
+            httpStatusCode: 200,
+            httpHeaders: [],
+            rawBody: Data(#"{"data":{"books":[]}}"#.utf8),
+            dataJSON: #"{"books":[]}"#,
+            errors: [],
+            extensionsJSON: nil,
+            metrics: nil,
+            error: nil
+        )
+        #expect(ResponseBodySaveSupport.isSaveable(response))
+    }
+
+    @Test func rejectsGraphQLResponseWithTransportError() {
+        let response = GraphQLResponseArtifact(
+            id: UUID(),
+            requestID: UUID(),
+            startedAt: .now,
+            finishedAt: .now,
+            endpointURL: URL(string: "https://example.com/graphql"),
+            httpStatusCode: 200,
+            httpHeaders: [],
+            rawBody: Data(#"{"data":{"books":[]}}"#.utf8),
+            dataJSON: #"{"books":[]}"#,
+            errors: [],
+            extensionsJSON: nil,
+            metrics: nil,
+            error: .cancelled
+        )
+        #expect(!ResponseBodySaveSupport.isSaveable(response))
+    }
+
+    @Test func allowsSaveForGRPCMessagePayload() {
+        let message = GRPCMessageEvent(
+            id: UUID(),
+            sequence: 1,
+            arrivedAt: .now,
+            direction: .inbound,
+            json: #"{"title":"Example"}"#
+        )
+        let artifact = GRPCResponseArtifact(
+            id: UUID(),
+            requestID: UUID(),
+            startedAt: .now,
+            finishedAt: .now,
+            target: "localhost:50051",
+            serviceFullName: "books.BooksService",
+            methodName: "ListBooks",
+            callShape: .unary,
+            streamState: .completed,
+            initialMetadata: [],
+            trailingMetadata: [],
+            messages: [message],
+            status: GRPCStatus(code: 0, message: "OK", detailsJSON: nil),
+            metrics: nil,
+            error: nil
+        )
+        #expect(ResponseBodySaveSupport.isSaveable(artifact, message: message))
+    }
+
+    private func sampleResponse(
+        statusCode: Int?,
+        body: Data,
+        mimeType: String?,
+        error: RESTExecutionError? = nil
+    ) -> RESTResponseArtifact {
+        RESTResponseArtifact(
+            id: UUID(),
+            requestID: UUID(),
+            startedAt: .now,
+            finishedAt: .now,
+            originalURL: URL(string: "https://example.com")!,
+            finalURL: URL(string: "https://example.com")!,
+            statusCode: statusCode,
+            headers: [],
+            body: body,
+            mimeType: mimeType,
+            textEncodingName: nil,
+            expectedContentLength: Int64(body.count),
+            metrics: nil,
+            redirects: [],
+            error: error
+        )
+    }
+}
+
 struct ResponseBodyFormatterTests {
     @Test func formatsJSON() throws {
         let data = #"{"b":1,"a":2}"#.data(using: .utf8)!

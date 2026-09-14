@@ -83,12 +83,19 @@ struct RequestWorkspaceView: View {
         case .rest:
             ResponseContainerView(
                 workspace: workspace,
+                requestName: request.name,
                 selectedTab: $commandCenter.selectedResponseTab
             )
         case .graphql:
-            GraphQLResponseView(artifact: workspace.graphqlResponse)
+            GraphQLResponseView(
+                artifact: workspace.graphqlResponse,
+                requestName: request.name
+            )
         case .grpc:
-            GRPCResponseView(artifact: workspace.grpcResponse)
+            GRPCResponseView(
+                artifact: workspace.grpcResponse,
+                requestName: request.name
+            )
         }
     }
 

@@ -22,6 +22,7 @@ enum GraphQLResponseSection: String, CaseIterable, Identifiable {
 
 struct GraphQLResponseView: View {
     let artifact: GraphQLResponseArtifact?
+    let requestName: String
     @State private var selectedSection: GraphQLResponseSection = .data
 
     var body: some View {
@@ -122,6 +123,13 @@ struct GraphQLResponseView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            if let artifact, ResponseBodySaveSupport.isSaveable(artifact) {
+                ResponseSaveAsButton(
+                    requestName: requestName,
+                    data: artifact.rawBody,
+                    descriptor: ResponseBodySaveSupport.descriptor(for: artifact)
+                )
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
