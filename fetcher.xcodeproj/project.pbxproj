@@ -221,26 +221,6 @@
 		};
 /* End PBXProject section */
 
-/* Begin PBXShellScriptBuildPhase section */
-		A1B2C3D4E5F6478990ABCDEF /* Embed protoc helper */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputPaths = (
-				"$(SRCROOT)/Scripts/embed-protoc.sh",
-			);
-			name = "Embed protoc helper";
-			outputPaths = (
-				"${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}/Contents/Helpers/protoc",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/bash;
-			shellScript = "\"${SRCROOT}/Scripts/embed-protoc.sh\"\n";
-		};
-/* End PBXShellScriptBuildPhase section */
-
 /* Begin PBXResourcesBuildPhase section */
 		445EFD21810C44968D17FB57 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
@@ -264,6 +244,26 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A1B2C3D4E5F6478990ABCDEF /* Embed protoc helper */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/Scripts/embed-protoc.sh",
+			);
+			name = "Embed protoc helper";
+			outputPaths = (
+				"${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}/Contents/Helpers/protoc",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "\"${SRCROOT}/Scripts/embed-protoc.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		072C4C8B82C048E58124E06C /* Sources */ = {
